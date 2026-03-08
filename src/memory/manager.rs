@@ -104,7 +104,7 @@ impl MemoryManager {
         let process: HANDLE = self.process.ok_or(MemoryError::ProcessNotFound)?;
         let mode = self.read_mode(process)?;
         match mode {
-            GameMode::InGame | GameMode::Retry => Ok(self.read_ingame_state(process, mode)?),
+            GameMode::InGame | GameMode::Retry => self.read_ingame_state(process, mode),
             _ => Ok(GameState::NotInGame { mode })
         }       
     }
