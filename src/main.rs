@@ -2,10 +2,11 @@ mod game;
 mod memory;
 mod validation;
 
-use std::io::Write;
-use std::sync::mpsc::{Receiver, Sender, channel};
 use std::{
-    io::{self},
+    io::{self, Write, stdin},
+    sync::{
+        Arc, atomic::{AtomicBool, Ordering}, mpsc::{Receiver, Sender, channel}
+    },
     thread::sleep,
     time::Duration,
 };
@@ -15,39 +16,86 @@ use crate::memory::manager::MemoryManager;
 use crate::validation::validator::{Validator, Validity};
 
 fn main() {
-    println!("App started");
+    println!("=== ATLAS OBSERVER ===\n");
+    let ranked_active = Arc::new(AtomicBool::new(false));
 
+    let ranked_active_memory = Arc::clone(&ranked_active);
     let (tx, rx) = channel();
-    std::thread::spawn(move || {
-        memory_thread(tx);
-    });
+
+    std::thread::spawn(move || memory_thread(tx, ranked_active_memory));
+    let handle = std::thread::spawn(move || validator_thread(rx));
     
-    validator_thread(rx);
+    input_thread(ranked_active);
 }
 
-fn memory_thread(tx: Sender<GameState>) {
+fn input_thread(ranked_active: Arc<AtomicBool>) {
+    println!("[RANKED MODE COMMANDS]");
+    println!("- 's' -> start\n- 'e' -> end");
+    loop {
+        let mut input = String::new();
+        stdin().read_line(&mut input).unwrap();
+        println!("");
+
+        // Ranked not started
+        if !ranked_active.load(Ordering::Relaxed) {
+            match input.to_lowercase().trim() {
+                "s" => {
+                    println!("\rRanking mode started.");
+                    ranked_active.store(true, Ordering::Relaxed);
+                },
+                _ => {}
+            }
+        } else {
+            match input.to_lowercase().trim() {
+                "e" => {
+                    print!("\rEnding ranked mode...\n");
+                    ranked_active.store(false, Ordering::Relaxed);
+                    sleep(Duration::from_millis(500));
+                    println!("\rRanking mode ended.");
+                },
+                _ => {}
+            }
+        }
+        sleep(Duration::from_millis(500));
+    }
+}
+
+fn memory_thread(tx: Sender<GameState>, ranked_active: Arc<AtomicBool>) {
     let mut memory = MemoryManager::new();
 
-    loop {
-        print!("\rRanked cannot start if MBAA is already open");
-        io::stdout().flush().unwrap();
+    'outer: loop {
+        // Wait for ranked mode to be enabled
+        while !ranked_active.load(Ordering::Relaxed) {
+            sleep(Duration::from_millis(500));
+        }
+
+        println!("\rMBAA session detected. Restart MBAA.exe.");
+        // io::stdout().flush().unwrap();
         while memory.is_running() {
+            if !ranked_active.load(Ordering::Relaxed) {
+                continue 'outer;
+            }
             sleep(Duration::from_secs(2));
         }
 
-        print!("\r{}", " ".repeat(100));
+        // print!("\r{}", " ".repeat(100));
         println!("\rWaiting for MBAA.exe...");
-        io::stdout().flush().unwrap();
         while let Err(_) = memory.attach() {
+            if !ranked_active.load(Ordering::Relaxed) {
+                continue 'outer;
+            }
             sleep(Duration::from_secs(2));
         }
 
         print!("\r{}", " ".repeat(100));
         println!("\rAttached to MBAA.exe");
-        io::stdout().flush().unwrap();
         loop {
+
             match memory.poll() {
                 Ok(state) => {
+                    if !ranked_active.load(Ordering::Relaxed) {
+                        break;
+                    }
                     if tx.send(state).is_err() {
                         eprintln!("Receiver dropped, shutting down memory thread.");
                         return;
@@ -56,9 +104,10 @@ fn memory_thread(tx: Sender<GameState>) {
                 Err(e) => {
                     if !memory.is_running() {
                         println!("Game closed.");
-                        break;
+                        ranked_active.store(false, Ordering::Relaxed);
+                    } else {
+                        eprintln!("Lost connection: {:?}", e);
                     }
-                    eprintln!("Lost connection: {:?}", e);
                     memory.detach();
                     break;
                 }
@@ -76,17 +125,16 @@ fn validator_thread(rx: Receiver<GameState>) {
         match validator.validate(state) {
             Ok(validity) => match validity {
                 Validity::Invalid(reason) => {
-                    println!("Invalid game state: {}", reason);
+                    println!("\rInvalid game state: {}", reason);
                     break;
                 },
                 Validity::MatchFinished(result) => {
-                    print!("\r{}", " ".repeat(200));
-                    println!("Match finished: {:?}", result);
+                    println!("\rMatch finished: {:?}", result);
                 },
                 _ => {}
             },
             Err(e) => {
-                eprintln!("Validator error: {:?}", e);
+                eprintln!("\rValidator error: {:?}", e);
                 break;
             }
         }
