@@ -1,28 +1,10 @@
-use std::default;
-
-use thiserror::Error;
-
 use super::character::{Character, Moon};
-use crate::memory::addresses::GameMode;
+use crate::memory::addresses::{ClientMode, GameMode, LocalPlayer};
 
 #[derive(Debug)]
 pub enum GameState {
-    InGame { mode: GameMode, timers: GameTimers, players: Players },
-    NotInGame { mode: GameMode }
-}
-
-impl GameState {
-    pub fn new_in_game(mode: GameMode, timers: GameTimers, players: Players) -> Self {
-        GameState::InGame {
-            mode,
-            timers,
-            players
-        }
-    }
-
-    pub fn new_not_ingame(mode: GameMode) -> Self {
-        GameState::NotInGame { mode }
-    }
+    InGame { local_player: LocalPlayer, client_mode: ClientMode, game_mode: GameMode, timers: GameTimers, players: Players },
+    NotInGame { game_mode: GameMode, client_mode: ClientMode }
 }
 
 #[derive(Debug)]

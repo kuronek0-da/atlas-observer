@@ -1,4 +1,4 @@
-## Validação ingame (WIP)
+## Validação ingame
 game_mode == IN_GAME
 real_timer > 0
 round_timer > 0

@@ -24,7 +24,7 @@ Only those i might find relevant
 #define CC_REAL_TIMER_ADDR          ( ( uint32_t * ) 0x562A40 ) // Counts up from 0 after round start 
 */
 
-use crate::game::character::{Character, Moon};
+/* === READ FROM MBAA === */
 
 pub const WORLD_TIMER_ADDR: usize = 0x55D1D4;
 pub const ROUND_TIMER_ADDR: usize = 0x562A3C;
@@ -54,3 +54,28 @@ pub const P2_CHARACTER_ADDR: usize = 0x74D920;
 pub const P2_MOON_SELECTOR_ADDR: usize = 0x74D924;
 pub const P2_WINS_ADDR:usize = 0x559580;
 pub const P2_GAME_POINT_FLAG_ADDR: usize = 0x55954C;
+
+/* === READ FROM CCCASTER === */
+
+pub const CLIENT_MODE_OFFSET: usize = 0x38208C;
+
+#[derive(Debug, TryFromPrimitive)]
+#[repr(u8)]
+pub enum ClientMode {
+    Unknown,
+    Host,
+    Client,
+    SpectateNetplay,
+    SpectateBroadcast,
+    Broadcast,
+    Offline
+}
+
+pub const LOCAL_PLAYER_OFFSET: usize = 0x3822F0;
+
+#[derive(Debug)]
+pub enum LocalPlayer {
+    Unknown,
+    P1,
+    P2,
+}

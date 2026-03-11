@@ -1,20 +1,21 @@
-use sysinfo::{Process, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use windows::{
-    Win32::Foundation::{CloseHandle, HANDLE},
-    Win32::System::Diagnostics::Debug::ReadProcessMemory,
-    Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+    Win32::Foundation::{HANDLE, CloseHandle},
+    Win32::System::{
+        Threading::{PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+    }
 };
 
-use super::addresses as addr;
-use addr::*;
+use super::addresses::*;
+use super::reader::*;
 use crate::game::{character::{Character, Moon}, 
     state::{self, GameState, GameTimers, Players}};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum MemoryError {
-    #[error("MBAA was not found.")]
-    ProcessNotFound,
+    #[error("Process '{0}' was not found.")]
+    ProcessNotFound(String),
     #[error("could not open MBAA")]
     OpenProcessFailed,
     #[error("error trying to read memory: {0}")]
@@ -25,88 +26,108 @@ pub enum MemoryError {
 
 pub struct MemoryManager {
     sys: System,
-    process: Option<HANDLE>,
-}
-
-macro_rules! read_u32 {
-    ($process:expr, $addr:expr) => {
-        read_u32($process, $addr)
-            .map_err(|_| MemoryError::ReadFailed(stringify!($addr).to_string()))
-    };
-}
-fn read_u32(process: HANDLE, address: usize) -> Result<u32, ()> {
-    unsafe {
-        let mut buffer: u32 = 0;
-        let mut bytes_read: usize = 0;
-
-        let result = ReadProcessMemory(
-            process,
-            address as *const _,
-            &mut buffer as *mut _ as *mut _,
-            std::mem::size_of::<u32>(),
-            Some(&mut bytes_read),
-        );
-
-        if result.is_ok() && bytes_read == size_of::<u32>() {
-            Ok(buffer)
-        } else {
-            Err(())
-        }
-    }
+    mb_process: Option<HANDLE>,
+    caster_process: Option<HANDLE>,
+    caster_base: Option<usize>
 }
 
 impl MemoryManager {
+    const MBAA: &str = "MBAA.exe";
+    const CASTER: &str = "cccaster.v3.1.exe";
+
     pub fn new() -> Self {
-        let mut sys = System::new_with_specifics(
+        let sys = System::new_with_specifics(
             RefreshKind::nothing().with_processes(ProcessRefreshKind::everything())
         );
         MemoryManager {
             sys,
-            process: None
+            mb_process: None,
+            caster_process: None,
+            caster_base: None
         }
     }
 
     // Attaches to MBAA.exe
     pub fn attach(&mut self) -> Result<(), MemoryError> {
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
-        if let Some(p) = self.sys.processes_by_exact_name("MBAA.exe".as_ref()).next() {
-            let pid = p.pid().as_u32();
+        let mb_pid = self.sys.processes_by_exact_name(Self::MBAA.as_ref()).next()
+            .ok_or(MemoryError::ProcessNotFound(Self::MBAA.to_string()))?;
+        let caster_pid = self.sys.processes_by_exact_name(Self::CASTER.as_ref()).next()
+            .ok_or(MemoryError::ProcessNotFound(Self::CASTER.to_string()))?;
 
-            unsafe {
-                self.process = OpenProcess(
-                    PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
-                    false,
-                    pid,
-                ).ok();
-
-                if self.process == None {
-                    return Err(MemoryError::OpenProcessFailed)
-                }
-                Ok(())
-            }
+        self.mb_process = Some(open_process(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+            false,
+            mb_pid.pid().as_u32(),
+        )?);
+        self.caster_process = Some(open_process(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+            false,
+            caster_pid.pid().as_u32()
+        )?);
+        if let Some(process) = self.caster_process  {
+            self.caster_base = Some(get_module_base(process, Self::CASTER)?);
         } else {
-            Err(MemoryError::ProcessNotFound)
-        }
+            return Err(MemoryError::ProcessNotFound(Self::CASTER.to_string()))
+        };
+
+        Ok(())
     }
 
     pub fn detach(&mut self) {
-        if let Some(handle) = self.process.take() {
+        if let Some(handle) = self.mb_process.take() {
             unsafe { let _ = CloseHandle(handle); }
         }
     }
 
     pub fn is_running(&mut self) -> bool {
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
-        self.sys.processes_by_exact_name("MBAA.exe".as_ref()).next().is_some()
+        self.sys.processes_by_exact_name(Self::MBAA.as_ref()).next().is_some()
     }
 
     pub fn poll(&self) -> Result<GameState, MemoryError> {
-        let process: HANDLE = self.process.ok_or(MemoryError::ProcessNotFound)?;
-        let mode = self.read_mode(process)?;
-        match mode {
-            GameMode::InGame | GameMode::Retry => self.read_ingame_state(process, mode),
-            _ => Ok(GameState::NotInGame { mode })
-        }       
+        let mb_process: HANDLE = self.mb_process.ok_or(MemoryError::ProcessNotFound(Self::MBAA.to_string()))?;
+        let caster_process = self.caster_process.ok_or(MemoryError::ProcessNotFound(Self::CASTER.to_string()))?;
+
+        self.read_game_state(mb_process, caster_process)
+    }
+
+    fn read_game_state(&self, mb_process: HANDLE, caster_process: HANDLE) -> Result<GameState, MemoryError> {
+        let game_mode = self.read_mode(mb_process)?;
+        match game_mode {
+            GameMode::InGame => {
+                // CCCaster
+                let local_player = self.read_local_player(caster_process)?;
+                let client_mode = self.read_client_mode(caster_process)?;
+                // MBAA
+                let timers = self.read_timers(mb_process)?;
+                let players = self.read_players(mb_process)?;
+
+                return Ok(GameState::InGame { local_player, client_mode, game_mode, timers, players })
+            },
+            _ => Ok(GameState::NotInGame { game_mode, client_mode: self.read_client_mode(caster_process)? })
+        }
+    }
+
+    fn read_local_player(&self, caster_process: HANDLE) -> Result<LocalPlayer, MemoryError> {
+        let base = self.caster_base.ok_or(MemoryError::ReadFailed("caster base addr not found.".to_string()))?;
+        let local_player_addr = base + LOCAL_PLAYER_OFFSET;
+        let local_player_value = read_u8!(caster_process, local_player_addr)?;
+
+        match local_player_value {
+            0 => Ok(LocalPlayer::Unknown),
+            1 => Ok(LocalPlayer::P1),
+            2 => Ok(LocalPlayer::P2),
+            e => Err(MemoryError::ParseFailed("local_player", e as u32))
+        }
+    }
+
+    fn read_client_mode(&self, caster_process: HANDLE) -> Result<ClientMode, MemoryError> {
+        let base = self.caster_base.ok_or(MemoryError::ReadFailed("caster base addr not found.".to_string()))?;
+        let client_mode_addr = base + CLIENT_MODE_OFFSET;
+        let client_value = read_u8!(caster_process, client_mode_addr)?;
+        
+        ClientMode::try_from(client_value).map_err(|_| MemoryError::ParseFailed("client mode", client_value as u32))
     }
 
     fn read_mode(&self, process: HANDLE) -> Result<GameMode, MemoryError> {
@@ -115,12 +136,6 @@ impl MemoryManager {
             Ok(mode) => Ok(mode),
             _ => Ok(GameMode::Unknown)
         }
-    }
-
-    fn read_ingame_state(&self, process: HANDLE, mode: GameMode) -> Result<GameState, MemoryError> {
-        let timers = self.read_timers(process)?;
-        let players = self.read_players(process)?;
-        Ok(GameState::InGame { mode, timers, players })
     }
 
     fn read_timers(&self, process: HANDLE) -> Result<GameTimers, MemoryError> {

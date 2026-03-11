@@ -1,113 +1,105 @@
 mod game;
 mod memory;
 mod validation;
-
+use std::array::repeat;
+use std::io::{self, Write};
 use std::{
-    io::{self, Write, stdin},
+    io::stdin,
     sync::{
         Arc, atomic::{AtomicBool, Ordering}, mpsc::{Receiver, Sender, channel}
     },
     thread::sleep,
     time::Duration,
 };
-use crate::game::state::GameState;
-use crate::memory::addresses::GameMode;
+use crate::{game::state::GameState, memory::addresses::GameMode};
 use crate::memory::manager::MemoryManager;
 use crate::validation::validator::{Validator, Validity};
 
 fn main() {
     println!("=== ATLAS OBSERVER ===\n");
-    let ranked_active = Arc::new(AtomicBool::new(false));
+    let mut ranked_active = false;
 
-    let ranked_active_memory = Arc::clone(&ranked_active);
-    let (tx, rx) = channel();
+    let mut will_continue = true;
 
-    std::thread::spawn(move || memory_thread(tx, ranked_active_memory));
-    let handle = std::thread::spawn(move || validator_thread(rx));
-    
     input_thread(ranked_active);
-}
 
-fn input_thread(ranked_active: Arc<AtomicBool>) {
-    println!("[RANKED MODE COMMANDS]");
-    println!("- 's' -> start\n- 'e' -> end");
-    loop {
+    while will_continue {
+        let (tx, rx) = channel();
+
+        let m = std::thread::spawn(move || memory_thread(tx));
+        let v = std::thread::spawn(move || validator_thread(rx));
+        
+        m.join();
+        v.join();
+
+        print!("Continue ranked? (y/n, default: y) > ");
+        std::io::stdout().flush().unwrap();
         let mut input = String::new();
         stdin().read_line(&mut input).unwrap();
-        println!("");
 
-        // Ranked not started
-        if !ranked_active.load(Ordering::Relaxed) {
-            match input.to_lowercase().trim() {
-                "s" => {
-                    println!("\rRanking mode started.");
-                    ranked_active.store(true, Ordering::Relaxed);
-                },
-                _ => {}
-            }
-        } else {
-            match input.to_lowercase().trim() {
-                "e" => {
-                    print!("\rEnding ranked mode...\n");
-                    ranked_active.store(false, Ordering::Relaxed);
-                    sleep(Duration::from_millis(500));
-                    println!("\rRanking mode ended.");
-                },
-                _ => {}
-            }
+        match input.to_lowercase().trim() {
+            "n" => {
+                will_continue = false;
+            },
+            _ => {}
         }
-        sleep(Duration::from_millis(500));
     }
 }
 
-fn memory_thread(tx: Sender<GameState>, ranked_active: Arc<AtomicBool>) {
+// TODO: control ranked mode
+fn input_thread(mut ranked_active: bool) {
+    println!("[RANKED MODE COMMANDS]");
+    println!("- 's' -> start\n");
+    // Ranked not started
+    if !ranked_active {
+        let mut input = String::new();
+        stdin().read_line(&mut input).unwrap();
+
+        match input.to_lowercase().trim() {
+            "s" => {
+                println!("\rRanking mode started.");
+                ranked_active = true;
+            },
+            _ => {}
+        }
+    }
+}
+
+fn memory_thread(tx: Sender<GameState>) {
     let mut memory = MemoryManager::new();
 
     'outer: loop {
-        // Wait for ranked mode to be enabled
-        while !ranked_active.load(Ordering::Relaxed) {
-            sleep(Duration::from_millis(500));
-        }
+        if memory.is_running() {
+            update_status(format!("MBAA session detected. Restart MBAA.exe."));
 
-        println!("\rMBAA session detected. Restart MBAA.exe.");
-        // io::stdout().flush().unwrap();
-        while memory.is_running() {
-            if !ranked_active.load(Ordering::Relaxed) {
-                continue 'outer;
+            while memory.is_running() {
+                sleep(Duration::from_secs(2));
             }
-            sleep(Duration::from_secs(2));
         }
 
         // print!("\r{}", " ".repeat(100));
-        println!("\rWaiting for MBAA.exe...");
+        update_status(format!("Waiting for MBAA.exe..."));
         while let Err(_) = memory.attach() {
-            if !ranked_active.load(Ordering::Relaxed) {
-                continue 'outer;
-            }
             sleep(Duration::from_secs(2));
         }
 
-        print!("\r{}", " ".repeat(100));
-        println!("\rAttached to MBAA.exe");
+        update_status(format!("Attached to MBAA.exe"));
         loop {
 
             match memory.poll() {
                 Ok(state) => {
-                    if !ranked_active.load(Ordering::Relaxed) {
-                        break;
-                    }
                     if tx.send(state).is_err() {
-                        eprintln!("Receiver dropped, shutting down memory thread.");
+                        update_status(format!("Receiver dropped, shutting down memory thread."));
                         return;
                     }
                 },
                 Err(e) => {
                     if !memory.is_running() {
-                        println!("Game closed.");
-                        ranked_active.store(false, Ordering::Relaxed);
+                        update_status(format!("Game closed. Ended ranked mode"));
                     } else {
-                        eprintln!("Lost connection: {:?}", e);
+                        update_status(format!("Lost connection: {:?}, Ended ranked mode", e));
                     }
+
                     memory.detach();
                     break;
                 }
@@ -120,23 +112,28 @@ fn memory_thread(tx: Sender<GameState>, ranked_active: Arc<AtomicBool>) {
 fn validator_thread(rx: Receiver<GameState>) {
     let mut validator = Validator::new();
 
-
     for state in rx {
         match validator.validate(state) {
             Ok(validity) => match validity {
                 Validity::Invalid(reason) => {
-                    println!("\rInvalid game state: {}", reason);
+                    update_status(format!("Invalid game state: {}", reason));
                     break;
                 },
                 Validity::MatchFinished(result) => {
-                    println!("\rMatch finished: {:?}", result);
+                    update_status(format!("Finished = {:?}", result));
                 },
                 _ => {}
             },
             Err(e) => {
-                eprintln!("\rValidator error: {:?}", e);
+                update_status(format!("Validator error: {:?}", e));
                 break;
             }
         }
     }
+}
+
+fn update_status(msg: String) {
+    // print!("{}", " ".repeat(100));
+    println!("\r[Status: {msg}]");
+    // std::io::stdout().flush().unwrap();
 }
