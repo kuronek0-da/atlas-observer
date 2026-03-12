@@ -11,6 +11,9 @@ use std::{
     thread::sleep,
     time::Duration,
 };
+
+use uuid::Uuid;
+
 use crate::{game::state::GameState, memory::addresses::GameMode};
 use crate::memory::manager::MemoryManager;
 use crate::validation::validator::{Validator, Validity};
@@ -110,7 +113,7 @@ fn memory_thread(tx: Sender<GameState>) {
 }
 
 fn validator_thread(rx: Receiver<GameState>) {
-    let mut validator = Validator::new();
+    let mut validator = Validator::new(Uuid::new_v4().to_string());
 
     for state in rx {
         match validator.validate(state) {
@@ -120,7 +123,7 @@ fn validator_thread(rx: Receiver<GameState>) {
                     break;
                 },
                 Validity::MatchFinished(result) => {
-                    update_status(format!("Finished = {}", result));
+                    update_status(format!("Finished = {:?}", result));
                 },
                 _ => {}
             },

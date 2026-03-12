@@ -1,12 +1,14 @@
 use crate::{game::state::GameState, memory::addresses::{ClientMode, GameMode}, validation::result::{MatchResult, StateError}};
 
 pub struct Validator {
+    session_id: String,
     matchstate: MatchState,
 }
 
 impl Validator {
-    pub fn new() -> Self {
+    pub fn new(session_id: String) -> Self {
         Validator {
+            session_id,
             matchstate: MatchState::default(),
         }
     }
@@ -21,7 +23,7 @@ impl Validator {
                 self.update_matchstate(&game_mode);
                 match &self.matchstate {
                     MatchState::MatchFinished => {
-                        let result = MatchResult::new(local_player, players, timers)?;
+                        let result = MatchResult::new(players, timers, self.session_id.clone())?;
                         return Ok(Validity::MatchFinished(result));
                     },
                     MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),

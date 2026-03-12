@@ -1,7 +1,6 @@
 use std::fmt;
-
 use thiserror::Error;
-
+use std::time::SystemTime;
 use crate::{game::state::{ GameTimers, Players }, memory::addresses::LocalPlayer};
 
 
@@ -19,41 +18,48 @@ pub enum Winner {
 
 #[derive(Debug)]
 pub struct MatchResult {
-    local_player: LocalPlayer,
     winner: Winner,
     players: Players,
+    session_id: String,
     // Should be the same for both players unless desyncs occur
-    timers: GameTimers
+    timers: MatchTimers,
+    timestamp: u64 // unix timestamp
+}
+
+#[derive(Debug)]
+pub struct MatchTimers {
+    pub round_timer: u32,
+    pub real_timer: u32
 }
 
 impl MatchResult {
-    pub fn new(local_player: LocalPlayer, players: Players, timers: GameTimers) -> Result<Self, StateError> {
+    pub fn new(players: Players, timers: GameTimers, session_id: String) -> Result<Self, StateError> {
         let p1 = &players.p1;
         let p2 = &players.p2;
+        let timers: MatchTimers = MatchTimers {
+            round_timer: timers.round_timer(),
+            real_timer: timers.real_timer()
+        };
+        let winner;
         
         // Max score = 3
-        if p1.score >= 3 || p2.score >= 3 {
-            return Err(StateError::MatchResultError("max score is 3.".to_string()));
+        if p1.score + p2.score != 3 {
+            return Err(StateError::MatchResultError("invalid match result".to_string()));
         }
         if p1.score > p2.score {
-            return Ok(MatchResult { local_player, winner: Winner::Player1, players, timers });
+            winner = Winner::Player1;
+        } else {
+            winner = Winner::Player2;
         }
-        return Ok(MatchResult { local_player, winner: Winner::Player2, players, timers });
+        return Ok(MatchResult { winner, players, session_id, timers, timestamp: get_unix_timestamp_u64() });
     }
 }
 
-impl fmt::Display for MatchResult {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let p1 = &self.players.p1;
-        let p2 = &self.players.p2;
-        let won = match self.local_player {
-            LocalPlayer::P1 => self.winner == Winner::Player1,
-            _ => self.winner == Winner::Player2,
-        };
-        write!(f, "Result: {} | {:?}-{:?} ({}x{}) {:?}-{:?}",
-            if won { "WIN" } else { "LOSE" },
-            p1.moon, p1.char, p1.score,
-            p2.score, p2.moon, p2.char
-        )
-    }
+fn get_unix_timestamp_u64() -> u64 {
+    let now = SystemTime::now();
+    let duration_since_epoch = now.duration_since(std::time::UNIX_EPOCH)
+        .expect("SystemTime set before UNIX EPOCH"); // Handle potential error if time is before 1970
+
+    // duration_since returns a Duration, which can be converted to seconds as u64
+    duration_since_epoch.as_secs()
 }
