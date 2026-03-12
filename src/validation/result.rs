@@ -1,3 +1,5 @@
+use std::fmt;
+
 use thiserror::Error;
 
 use crate::{game::state::{ GameTimers, Players }, memory::addresses::LocalPlayer};
@@ -9,7 +11,7 @@ pub enum StateError {
     MatchResultError(String)
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Winner {
     Player1,
     Player2
@@ -37,5 +39,21 @@ impl MatchResult {
             return Ok(MatchResult { local_player, winner: Winner::Player1, players, timers });
         }
         return Ok(MatchResult { local_player, winner: Winner::Player2, players, timers });
+    }
+}
+
+impl fmt::Display for MatchResult {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let p1 = &self.players.p1;
+        let p2 = &self.players.p2;
+        let won = match self.local_player {
+            LocalPlayer::P1 => self.winner == Winner::Player1,
+            _ => self.winner == Winner::Player2,
+        };
+        write!(f, "Result: {} | {:?}-{:?} ({}x{}) {:?}-{:?}",
+            if won { "WIN" } else { "LOSE" },
+            p1.moon, p1.char, p1.score,
+            p2.score, p2.moon, p2.char
+        )
     }
 }

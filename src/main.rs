@@ -120,7 +120,7 @@ fn validator_thread(rx: Receiver<GameState>) {
                     break;
                 },
                 Validity::MatchFinished(result) => {
-                    update_status(format!("Finished = {:?}", result));
+                    update_status(format!("Finished = {}", result));
                 },
                 _ => {}
             },

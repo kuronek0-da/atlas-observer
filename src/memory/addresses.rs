@@ -73,7 +73,7 @@ pub enum ClientMode {
 
 pub const LOCAL_PLAYER_OFFSET: usize = 0x3822F0;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum LocalPlayer {
     Unknown,
     P1,

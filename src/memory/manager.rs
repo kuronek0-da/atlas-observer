@@ -95,7 +95,7 @@ impl MemoryManager {
     fn read_game_state(&self, mb_process: HANDLE, caster_process: HANDLE) -> Result<GameState, MemoryError> {
         let game_mode = self.read_mode(mb_process)?;
         match game_mode {
-            GameMode::InGame => {
+            GameMode::InGame | GameMode::Retry => {
                 // CCCaster
                 let local_player = self.read_local_player(caster_process)?;
                 let client_mode = self.read_client_mode(caster_process)?;
