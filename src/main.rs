@@ -1,44 +1,37 @@
+mod client;
+mod config;
 mod game;
 mod memory;
 mod validation;
-mod client;
-mod config;
-use std::array::repeat;
-use std::fmt::format;
-use std::io::{self, Write};
-use std::sync::Mutex;
 use std::{
-    io::stdin,
     sync::{
-        Arc, atomic::{AtomicBool, Ordering}, mpsc::{Receiver, Sender, channel}
+        mpsc::{Receiver, Sender, channel},
     },
     thread::sleep,
     time::Duration,
 };
 
-use uuid::Uuid;
-
 use crate::client::ClientManager;
 use crate::client::state::ClientState;
-use crate::validation::result::MatchResult;
-use crate::{game::state::GameState, memory::addresses::GameMode};
 use crate::memory::manager::MemoryManager;
 use crate::validation::validator::{Validator, Validity};
+use crate::{game::state::GameState};
 
 fn main() {
     println!("=== ATLAS OBSERVER ===\n");
 
-    let client = ClientManager::new().unwrap();
-    let state = client.clone_state();
+    let state = match host_or_join_input() {
+        Some(s) => s,
+        None => std::process::exit(1)
+    };
+
+    let client = match ClientManager::new(state) {
+        Ok(cli) => cli,
+        Err(e) => panic!("Could not start client: {}", e)
+    };
+
     let (tx, rx) = channel();
 
-    *state.lock().unwrap() = if let Some(s) = host_or_join_input() {
-        s
-    } else {
-        println!("Exiting app...");
-        std::process::exit(1);
-    };
-    
     let m = std::thread::spawn(move || memory_thread(tx));
     let v = std::thread::spawn(move || validator_thread(rx, client));
 
@@ -49,7 +42,7 @@ fn main() {
 fn memory_thread(tx: Sender<GameState>) {
     let mut memory = MemoryManager::new();
 
-    'outer: loop {
+    loop {
         if memory.is_running() {
             update_status(format!("MBAA session detected. Restart MBAA.exe."));
 
@@ -66,14 +59,13 @@ fn memory_thread(tx: Sender<GameState>) {
 
         update_status(format!("Attached to MBAA.exe"));
         loop {
-
             match memory.poll() {
                 Ok(state) => {
                     if tx.send(state).is_err() {
                         update_status(format!("Receiver dropped, shutting down memory thread."));
                         return;
                     }
-                },
+                }
                 Err(e) => {
                     if !memory.is_running() {
                         update_status(format!("Game closed. Ended ranked mode"));
@@ -99,11 +91,15 @@ fn validator_thread(rx: Receiver<GameState>, client: ClientManager) {
                 Validity::Invalid(reason) => {
                     update_status(format!("Invalid game state: {}", reason));
                     break;
-                },
+                }
                 Validity::MatchFinished(result) => {
-                    client.send_result(&result);
+                    if client.send_result(&result).is_err() {
+                        update_status("Could not send match to the server.".to_string());
+                        update_status("Exiting ranked mode...".to_string());
+                        break;
+                    }
                     update_status(format!("Finished = {:?}", result));
-                },
+                }
                 _ => {}
             },
             Err(e) => {
@@ -118,24 +114,25 @@ fn host_or_join_input() -> Option<ClientState> {
     println!("Commands: 'host' to generate a code, 'join <code>' to join, 'stop' to cancel");
     loop {
         let mut input = String::new();
-        std::io::stdin().read_line(&mut input).unwrap();
+        std::io::stdin().read_line(&mut input)
+            .expect("Could not read input.");
         match input.trim() {
             "host" => {
                 let host_state = ClientState::hosting();
-                if let Some(session) = host_state.get_session() {
+                if let Some(session) = host_state.session() {
                     println!("Your code: {}", session);
                 }
                 break Some(host_state);
-            },
+            }
             cmd if cmd.starts_with("join ") => {
                 let session = cmd[5..].trim().to_string();
                 println!("Joined ranked match with code: {}", session);
                 break Some(ClientState::JoinedRanked(session.clone()));
-            },
+            }
             "stop" => {
                 break None;
             }
-            _ => println!("Unknown command.")
+            _ => println!("Unknown command."),
         }
     }
 }

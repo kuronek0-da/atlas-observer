@@ -1,6 +1,11 @@
-use std::{ops::Deref, sync::{Arc, Mutex}};
+use std::sync::{Arc, Mutex};
 
-use crate::{client::state::ClientState, game::state::GameState, memory::addresses::{ClientMode, GameMode}, validation::result::{MatchResult, StateError}};
+use crate::{
+    client::state::ClientState,
+    game::state::GameState,
+    memory::addresses::{ClientMode, GameMode},
+    validation::result::{MatchResult, StateError},
+};
 
 pub struct Validator {
     client_state: Arc<Mutex<ClientState>>,
@@ -17,7 +22,14 @@ impl Validator {
 
     pub fn validate(&mut self, state: GameState) -> Result<Validity, StateError> {
         match state {
-            GameState::InGame { local_player, client_mode, game_mode, timers, players } => {
+            // During in-game and retry menu
+            GameState::InGame {
+                local_player,
+                client_mode,
+                game_mode,
+                timers,
+                players,
+            } => {
                 if !matches!(client_mode, ClientMode::Host | ClientMode::Client) {
                     return Ok(Validity::Invalid("not in netplay".to_string()));
                 }
@@ -26,29 +38,38 @@ impl Validator {
                 match &self.matchstate {
                     MatchState::MatchFinished => {
                         let session_id = match self.client_state.lock() {
-                            Ok(state) => match state.get_session() {
+                            Ok(state) => match state.session() {
                                 Some(session) => Ok(String::from(session)),
-                                None => Err(StateError::MatchResultError("could not get session id / code".to_string()))
+                                None => Err(StateError::MatchResultError(
+                                    "could not get session id / code".to_string(),
+                                )),
                             },
-                            Err(_) => Err(StateError::MatchResultError("could not get client state".to_string()))
+                            Err(_) => Err(StateError::MatchResultError(
+                                "could not get client state".to_string(),
+                            )),
                         };
 
-                        let result = MatchResult::new(local_player as u8, players, timers, session_id?)?;
+                        let result =
+                            MatchResult::new(local_player as u8, players, timers, session_id?)?;
                         return Ok(Validity::MatchFinished(result));
-                    },
+                    }
                     MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),
-                    _ => Ok(Validity::Valid)
+                    _ => Ok(Validity::Valid),
                 }
-            },
-            GameState::NotInGame { game_mode, client_mode } => {
+            }
+            // during char select or transition states
+            GameState::NotInGame {
+                game_mode,
+                client_mode,
+            } => {
                 if !matches!(client_mode, ClientMode::Host | ClientMode::Client) {
                     return Ok(Validity::Invalid("not in netplay".to_string()));
                 }
-                
+
                 self.update_matchstate(&game_mode);
                 match &self.matchstate {
                     MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),
-                    _ => Ok(Validity::Valid)
+                    _ => Ok(Validity::Valid),
                 }
             }
         }
@@ -69,9 +90,9 @@ impl Validator {
                     return;
                 }
                 self.matchstate = MatchState::RetryMenu;
-            },
+            }
             GameMode::ReplayMenu => self.matchstate = MatchState::invalid_mode(game_mode),
-            _ => ()
+            _ => (),
         }
     }
 }
@@ -80,39 +101,48 @@ impl Validator {
 pub enum Validity {
     Valid,
     Invalid(String),
-    MatchFinished(MatchResult)
+    MatchFinished(MatchResult),
 }
 
 #[derive(Debug, Eq, PartialEq, Default)]
 pub enum MatchState {
     #[default]
-    Idle, // Before char select and after retry menu
+    /// Before char select and after retry menu
+    Idle,
     WaitingInCharSelect,
     InGame,
     RetryMenu,
-    MatchFinished, // Will only happen once every match, then go back to retry
+    /// Will only happen once every match, then go back to retry
+    MatchFinished,
     Invalid(String),
 }
 
 impl MatchState {
     pub fn invalid_mode(game_mode: &GameMode) -> MatchState {
-        MatchState::Invalid(format!("invalid match state detected before {:?}", game_mode))
+        MatchState::Invalid(format!(
+            "invalid match state detected before {:?}",
+            game_mode
+        ))
     }
 
     fn is_valid_before(&self, game_mode: &GameMode) -> bool {
         match game_mode {
-            GameMode::CharSelect => matches!(self,
-                MatchState::Idle | MatchState::RetryMenu |
-                MatchState::InGame | MatchState::WaitingInCharSelect
+            GameMode::CharSelect => matches!(
+                self,
+                MatchState::Idle
+                    | MatchState::RetryMenu
+                    | MatchState::InGame
+                    | MatchState::WaitingInCharSelect
             ),
-            GameMode::InGame => matches!(self,
+            GameMode::InGame => matches!(
+                self,
                 MatchState::RetryMenu | MatchState::InGame | MatchState::WaitingInCharSelect
             ),
-            GameMode::Retry => matches!(self,
+            GameMode::Retry => matches!(
+                self,
                 MatchState::InGame | MatchState::RetryMenu | MatchState::MatchFinished
             ),
-            _ => true
+            _ => true,
         }
     }
-
 }

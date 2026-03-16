@@ -5,20 +5,34 @@ use crate::memory::addresses::{ClientMode, GameMode, LocalPlayer};
 
 #[derive(Debug)]
 pub enum GameState {
-    InGame { local_player: LocalPlayer, client_mode: ClientMode, game_mode: GameMode, timers: GameTimers, players: Players },
-    NotInGame { game_mode: GameMode, client_mode: ClientMode }
+    InGame {
+        local_player: LocalPlayer,
+        client_mode: ClientMode,
+        game_mode: GameMode,
+        timers: GameTimers,
+        players: Players,
+    },
+    NotInGame {
+        game_mode: GameMode,
+        client_mode: ClientMode,
+    },
 }
 
+// Currently clashing with MatchTimer, i might delete or use it for validation later
 #[derive(Debug)]
 pub struct GameTimers {
     world_timer: u32,
     round_timer: u32,
-    real_timer: u32
+    real_timer: u32,
 }
 
 impl GameTimers {
     pub fn new(world_timer: u32, round_timer: u32, real_timer: u32) -> Self {
-        GameTimers { world_timer, round_timer, real_timer }
+        GameTimers {
+            world_timer,
+            round_timer,
+            real_timer,
+        }
     }
     pub fn world_timer(&self) -> u32 {
         self.world_timer
@@ -31,6 +45,7 @@ impl GameTimers {
     }
 }
 
+// Remove this struct later, make p1 and p2 a field in gamestate
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Players {
     pub p1: Player,
@@ -49,3 +64,4 @@ pub struct Player {
     pub score: u32,
     pub moon: Moon,
 }
+

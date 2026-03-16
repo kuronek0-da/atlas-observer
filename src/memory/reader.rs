@@ -2,9 +2,9 @@ use windows::{
     Win32::Foundation::{HANDLE, HMODULE},
     Win32::System::{
         Diagnostics::Debug::ReadProcessMemory,
-        Threading::{OpenProcess, PROCESS_ACCESS_RIGHTS},
         ProcessStatus::{EnumProcessModules, GetModuleFileNameExA},
-    }
+        Threading::{OpenProcess, PROCESS_ACCESS_RIGHTS},
+    },
 };
 
 use super::manager::MemoryError;
@@ -38,8 +38,7 @@ pub fn read_u32(process: HANDLE, address: usize) -> Result<u32, ()> {
 
 macro_rules! read_u8 {
     ($process:expr, $addr:expr) => {
-        read_u8($process, $addr)
-            .map_err(|_| MemoryError::ReadFailed(stringify!($addr).to_string()))
+        read_u8($process, $addr).map_err(|_| MemoryError::ReadFailed(stringify!($addr).to_string()))
     };
 }
 pub fn read_u8(process: HANDLE, address: usize) -> Result<u8, ()> {
@@ -100,11 +99,10 @@ pub fn get_module_base(process: HANDLE, target: &str) -> Result<usize, MemoryErr
 pub fn open_process(
     dwdesiredaccess: PROCESS_ACCESS_RIGHTS,
     binherithandle: bool,
-    dwprocessid: u32
+    dwprocessid: u32,
 ) -> Result<HANDLE, MemoryError> {
     unsafe {
         OpenProcess(dwdesiredaccess, binherithandle, dwprocessid)
             .map_err(|_| MemoryError::OpenProcessFailed)
     }
 }
-
