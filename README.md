@@ -38,7 +38,7 @@ Player starts ranked mode
 Create a `config.toml` file in the same directory as the executable:
 
 ```toml
-server_url = "https://your-server-url.com/api/match"
+server_url = "https://the-server-url/api/match"
 player_id = 1
 ```
 
