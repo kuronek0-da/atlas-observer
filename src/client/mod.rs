@@ -1,3 +1,5 @@
 pub mod state;
-pub mod manager;
-pub use manager::{ClientManager};
+pub mod http;
+
+pub use state::ClientState;
+pub use http::ClientManager;

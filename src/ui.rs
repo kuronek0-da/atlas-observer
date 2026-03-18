@@ -1,3 +1,0 @@
-fn input_thread() {
-    
-}

@@ -82,4 +82,3 @@ pub enum LocalPlayer {
     P1,
     P2,
 }
-

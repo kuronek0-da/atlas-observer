@@ -1,5 +1,6 @@
-// mod.rs
 #[macro_use]
 mod reader;
-pub mod manager;
 pub mod addresses;
+pub mod process;
+
+pub use process::{ MemoryManager };

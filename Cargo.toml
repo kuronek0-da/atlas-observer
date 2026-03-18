@@ -19,3 +19,4 @@ windows = { version = "0.62.2", features = [
     "Win32_System_ProcessStatus"
 ] }
 toml = "1.0.6"
+cli-clipboard = "0.4.0"

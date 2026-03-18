@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::character::{GameChar, Moon};
+use crate::game::{GameChar, Moon};
 use crate::memory::addresses::{ClientMode, GameMode, LocalPlayer};
 
 #[derive(Debug)]
@@ -10,7 +10,7 @@ pub enum GameState {
         client_mode: ClientMode,
         game_mode: GameMode,
         timers: GameTimers,
-        players: Players,
+        players: [Player; 2],
     },
     NotInGame {
         game_mode: GameMode,
@@ -46,17 +46,17 @@ impl GameTimers {
 }
 
 // Remove this struct later, make p1 and p2 a field in gamestate
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Players {
-    pub p1: Player,
-    pub p2: Player,
-}
-
-impl Players {
-    pub fn new(p1: Player, p2: Player) -> Self {
-        Players { p1, p2 }
-    }
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// pub struct Players {
+//     pub p1: Player,
+//     pub p2: Player,
+// }
+//
+// impl Players {
+//     pub fn new(p1: Player, p2: Player) -> Self {
+//         Players { p1, p2 }
+//     }
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Player {
@@ -64,4 +64,3 @@ pub struct Player {
     pub score: u32,
     pub moon: Moon,
 }
-

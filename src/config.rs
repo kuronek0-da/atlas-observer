@@ -25,9 +25,8 @@ impl Config {
     }
 
     fn from_file(path: &str) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|_| ConfigError::FileNotFound)?;
-        toml::from_str(&content)
-            .map_err(|e| ConfigError::ParseError(e.to_string()))
+        let content = std::fs::read_to_string(path).map_err(|_| ConfigError::FileNotFound)?;
+        toml::from_str(&content).map_err(|e| ConfigError::ParseError(e.to_string()))
     }
 }
+

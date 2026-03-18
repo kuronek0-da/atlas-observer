@@ -7,7 +7,7 @@ use windows::{
     },
 };
 
-use super::manager::MemoryError;
+use super::process::MemoryError;
 
 macro_rules! read_u32 {
     ($process:expr, $addr:expr) => {
