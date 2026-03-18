@@ -1,3 +1,4 @@
 /target
 ranked.log
 .cargo
+*.exe
