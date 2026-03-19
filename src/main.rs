@@ -1,3 +1,4 @@
+mod cli;
 mod client;
 mod config;
 mod game;
@@ -11,13 +12,46 @@ use std::{
     time::Duration,
 };
 
-use crate::client::{ClientManager, ClientState};
 use crate::game::state::GameState;
 use crate::memory::MemoryManager;
 use crate::validation::{Validator, Validity};
+use crate::{cli::update_status, config::ConfigError};
+use crate::{
+    client::{ClientManager, ClientState},
+    config::Config,
+};
 
 fn main() {
     println!("=== ATLAS OBSERVER ===\n");
+
+    match Config::load().as_mut() {
+        Ok(conf) => {
+            if conf.token.is_empty() {
+                conf.token = cli::prompt_token();
+                if let Err(e) = conf.save() {
+                    eprintln!("{}", e);
+                    exit_app();
+                }
+            }
+        }
+        Err(e) => match e {
+            ConfigError::ParseError(msg) => {
+                eprintln!("Config Error: {}", e);
+                exit_app();
+            }
+            _ => {
+                eprintln!("Config Error: {}\nTrying to create a config file...", e);
+                let new_conf = Config::new();
+                match new_conf.save() {
+                    Ok(_) => {
+                        println!("Config file created successfully. Please set your config there.")
+                    }
+                    Err(e) => eprintln!("Config Error: {}", e),
+                }
+                exit_app();
+            }
+        },
+    }
 
     let client = match ClientManager::new(ClientState::Idle) {
         Ok(cli) => cli,
@@ -28,7 +62,7 @@ fn main() {
         }
     };
 
-    println!("Cheking the server...");
+    update_status("Cheking the server...".to_string());
     match client.validate_token() {
         Ok(vr) => update_status(format!("Logged as {}", vr.discord_username)),
         Err(e) => {
@@ -37,7 +71,7 @@ fn main() {
         }
     }
 
-    match host_or_join_input() {
+    match cli::host_or_join_input() {
         Some(s) => client.update_state(s),
         None => std::process::exit(1),
     };
@@ -141,42 +175,4 @@ fn validator_thread(rx: Receiver<GameState>, client: ClientManager) {
             }
         }
     }
-}
-
-fn host_or_join_input() -> Option<ClientState> {
-    println!("Commands: 'host' to generate a code, 'join <code>' to join, 'stop' to cancel");
-    loop {
-        let mut input = String::new();
-        std::io::stdin()
-            .read_line(&mut input)
-            .expect("Could not read input.");
-        match input.trim() {
-            "host" => {
-                let host_state = ClientState::hosting();
-                if let Some(session) = host_state.session() {
-                    update_status(format!("Your code: {}", session));
-                    match cli_clipboard::set_contents(session.to_owned()) {
-                        Ok(_) => update_status("Code copied to clipboard".to_string()),
-                        Err(_) => update_status("Could not set code to clipboard".to_string()),
-                    }
-                }
-                break Some(host_state);
-            }
-            cmd if cmd.starts_with("join ") => {
-                let session = cmd[5..].trim().to_string().to_uppercase();
-                println!("Joined ranked match with code: {}", session);
-                break Some(ClientState::JoinedRanked(session.clone()));
-            }
-            "stop" => {
-                break None;
-            }
-            _ => println!("Unknown command."),
-        }
-    }
-}
-
-fn update_status(msg: String) {
-    // print!("{}", " ".repeat(100));
-    println!("\r[Status: {msg}]");
-    // std::io::stdout().flush().unwrap();
 }
