@@ -3,8 +3,9 @@ mod config;
 mod game;
 mod memory;
 mod validation;
+use core::panic;
 use std::{
-    io::Error,
+    error::Error,
     sync::mpsc::{Receiver, Sender, channel},
     thread::sleep,
     time::Duration,
@@ -15,21 +16,28 @@ use crate::game::state::GameState;
 use crate::memory::MemoryManager;
 use crate::validation::{Validator, Validity};
 
-fn main() -> Result<(), Error> {
+fn main() {
     println!("=== ATLAS OBSERVER ===\n");
 
-    let state = match host_or_join_input() {
-        Some(s) => s,
-        None => std::process::exit(1),
-    };
-
-    let client = match ClientManager::new(state) {
+    let client = match ClientManager::new(ClientState::Idle) {
         Ok(cli) => cli,
         Err(e) => {
             println!("Could not start client: {}", e);
             exit_app();
-            std::process::exit(1);
+            panic!("Unreachable line");
         }
+    };
+
+    println!("Cheking the server...");
+    if let Err(e) = client.validate_token() {
+        eprintln!("{}", e);
+        exit_app();
+    }
+    println!("Server is up and user is valid.\n");
+
+    match host_or_join_input() {
+        Some(s) => client.update_state(s),
+        None => std::process::exit(1),
     };
 
     let (tx, rx) = channel();
@@ -45,7 +53,6 @@ fn main() -> Result<(), Error> {
     }
 
     exit_app();
-    Ok(())
 }
 
 fn exit_app() {
@@ -54,6 +61,7 @@ fn exit_app() {
     std::io::stdin()
         .read_line(&mut input)
         .expect("Could not read input.");
+    std::process::exit(1);
 }
 
 fn memory_thread(tx: Sender<GameState>) {

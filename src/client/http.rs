@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    fmt::format,
+    sync::{Arc, Mutex},
+};
 
 use crate::{
     client::state::ClientState,
@@ -7,7 +10,7 @@ use crate::{
 };
 use reqwest::{
     blocking::{Client, Response},
-    header::{HeaderMap, HeaderValue},
+    header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue},
 };
 use thiserror::Error;
 
@@ -17,11 +20,15 @@ pub enum ClientError {
     RequestError(String),
     #[error("something went wrong, server status response: '{0}'")]
     ServerError(u16),
+    #[error("token expired or is invalid")]
+    AuthorizationError,
+    #[error("could not read client state")]
+    StateError,
 }
 
 /// Handles the requests to the server
 pub struct ClientManager {
-    player_id: u32,
+    token: String,
     server_url: String,
     state: Arc<Mutex<ClientState>>,
     client: Client,
@@ -38,7 +45,7 @@ impl ClientManager {
 
     fn from_config(state: ClientState, config: Config) -> Result<Self, ConfigError> {
         Ok(ClientManager {
-            player_id: config.player_id,
+            token: config.token,
             server_url: config.server_url,
             state: Arc::new(Mutex::new(state)),
             client: Client::new(),
@@ -51,9 +58,31 @@ impl ClientManager {
 
     fn construct_headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
+        let auth = format!("Bearer {}", self.token);
         // headers.insert("ngrok-skip-browser-warning", HeaderValue::from_static("1"));
-        headers.insert("Content-Type", HeaderValue::from_static("application/json"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&auth).expect("Invalid token"),
+        );
         headers
+    }
+
+    pub fn validate_token(&self) -> Result<(), ClientError> {
+        let res = self
+            .client
+            .post(self.validation_path())
+            .headers(self.construct_headers())
+            .send()
+            .map_err(|e| ClientError::RequestError(e.to_string()))?;
+
+        if res.status().is_success() {
+            return Ok(());
+        }
+        if res.status().as_u16() == 401 {
+            return Err(ClientError::AuthorizationError);
+        }
+        Err(ClientError::ServerError(res.status().as_u16()))
     }
 
     pub fn send_result(&self, result: &MatchResult) -> Result<Response, ClientError> {
@@ -72,9 +101,19 @@ impl ClientManager {
         }
     }
 
-    pub fn result_path(&self) -> String {
+    fn result_path(&self) -> String {
         // TODO: get player from token instead of param
-        format!("{}/api/match?playerId={}", self.server_url, self.player_id)
+        format!("{}/api/match", self.server_url)
+    }
+
+    fn validation_path(&self) -> String {
+        format!("{}/auth/validate", self.server_url)
+    }
+
+    pub fn update_state(&self, state: ClientState) -> Result<(), ClientError> {
+        let mut data = self.state.lock().map_err(|_| ClientError::StateError)?;
+        *data = state;
+        Ok(())
     }
 }
 
@@ -120,29 +159,45 @@ mod tests {
             .session()
             .expect("Session id not set for client")
             .to_string();
-
         let client2 = ClientManager::new_test(ClientState::JoinedRanked(session_id.clone()))
             .expect("Failed to load config.");
-
         let result1 = mock_match_result(session_id.clone(), 1);
         let result2 = mock_match_result(session_id, 2);
 
-        println!("Sending req to: {}", client1.result_path());
-        std::thread::spawn(move || {
+        let (tx1, rx1) = std::sync::mpsc::channel();
+        let (tx2, rx2) = std::sync::mpsc::channel();
+
+        println!("Sending first request to: {}", client1.result_path());
+        let f = std::thread::spawn(move || {
             let req1 = client1.send_result(&result1);
-            match req1 {
-                Ok(res) => assert!(res.status().is_success()),
-                Err(e) => panic!("{}", e),
-            }
+            println!("First request got a response");
+            tx1.send(req1).unwrap();
         });
 
-        sleep(Duration::from_millis(100));
+        sleep(Duration::from_millis(1000));
 
-        let req2 = client2.send_result(&result2);
-        match req2 {
+        println!("Sending second request...");
+        let s = std::thread::spawn(move || {
+            let req2 = client2.send_result(&result2);
+            println!("Second request got a response");
+            tx2.send(req2).unwrap();
+        });
+
+        f.join().expect("First thread failed");
+        s.join().expect("Second thread failed");
+
+        match rx1.recv().unwrap() {
             Ok(res) => {
-                assert!(res.status().is_success());
-                println!("{}", res.text().unwrap());
+                println!("First request status: {}", res.status().as_u16());
+                assert_eq!(res.status().as_u16(), 201);
+            }
+            Err(e) => panic!("{}", e),
+        }
+
+        match rx2.recv().unwrap() {
+            Ok(res) => {
+                println!("Second request status: {}", res.status().as_u16());
+                assert_eq!(res.status().as_u16(), 201);
             }
             Err(e) => panic!("{}", e),
         }

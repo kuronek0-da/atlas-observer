@@ -12,7 +12,7 @@ pub enum ConfigError {
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub server_url: String,
-    pub player_id: u32,
+    pub token: String,
 }
 
 impl Config {
