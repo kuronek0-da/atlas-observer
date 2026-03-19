@@ -29,11 +29,13 @@ fn main() {
     };
 
     println!("Cheking the server...");
-    if let Err(e) = client.validate_token() {
-        eprintln!("{}", e);
-        exit_app();
+    match client.validate_token() {
+        Ok(vr) => update_status(format!("Logged as {}", vr.discord_username)),
+        Err(e) => {
+            eprint!("Client Error: {}", e);
+            exit_app();
+        }
     }
-    println!("Server is up and user is valid.\n");
 
     match host_or_join_input() {
         Some(s) => client.update_state(s),
@@ -93,13 +95,12 @@ fn memory_thread(tx: Sender<GameState>) {
                 }
                 Err(e) => {
                     if !memory.is_running() {
-                        update_status(format!("Game closed. Ended ranked mode"));
+                        update_status(format!("Game closed. Waiting for next session..."));
                     } else {
-                        update_status(format!("Lost connection: {:?}, Ended ranked mode", e));
+                        update_status(format!("Lost connection: {:?}", e));
                     }
-
                     memory.detach();
-                    break 'outer;
+                    break; // back to outer loop, not exit
                 }
             }
             sleep(Duration::from_millis(16));
@@ -127,15 +128,9 @@ fn validator_thread(rx: Receiver<GameState>, client: ClientManager) {
                             ),
                         },
                         Err(e) => {
-                            update_status(format!("{:?}", e));
+                            update_status(format!("Could not send match to the server: {:?}", e));
                             break;
                         }
-                    }
-
-                    if client.send_result(&result).is_err() {
-                        update_status("Could not send match to the server.".to_string());
-                        update_status("Exiting ranked mode...".to_string());
-                        break;
                     }
                 }
                 _ => {}
@@ -159,11 +154,11 @@ fn host_or_join_input() -> Option<ClientState> {
             "host" => {
                 let host_state = ClientState::hosting();
                 if let Some(session) = host_state.session() {
+                    update_status(format!("Your code: {}", session));
                     match cli_clipboard::set_contents(session.to_owned()) {
                         Ok(_) => update_status("Code copied to clipboard".to_string()),
                         Err(_) => update_status("Could not set code to clipboard".to_string()),
                     }
-                    println!("Your code: {}", session);
                 }
                 break Some(host_state);
             }

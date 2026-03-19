@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    client::state::ClientState,
+    client::{server_response::ValidationResponse, state::ClientState},
     config::{Config, ConfigError},
     validation::result::MatchResult,
 };
@@ -24,6 +24,8 @@ pub enum ClientError {
     AuthorizationError,
     #[error("could not read client state")]
     StateError,
+    #[error("could not parse '{0}'")]
+    ParseError(String),
 }
 
 /// Handles the requests to the server
@@ -68,7 +70,7 @@ impl ClientManager {
         headers
     }
 
-    pub fn validate_token(&self) -> Result<(), ClientError> {
+    pub fn validate_token(&self) -> Result<ValidationResponse, ClientError> {
         let res = self
             .client
             .post(self.validation_path())
@@ -77,7 +79,7 @@ impl ClientManager {
             .map_err(|e| ClientError::RequestError(e.to_string()))?;
 
         if res.status().is_success() {
-            return Ok(());
+            return res.json().map_err(|_| ClientError::ParseError("validation response".to_string()));
         }
         if res.status().as_u16() == 401 {
             return Err(ClientError::AuthorizationError);
