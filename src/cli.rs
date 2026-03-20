@@ -33,7 +33,7 @@ pub fn host_or_join_input() -> Option<ClientState> {
 }
 
 pub fn prompt_token() -> String {
-    println!("Token not found or is invalid. Please insert a valid token:");
+    println!("Token not found or is invalid. Please insert a valid token below or update your config file:");
     let mut input = String::new();
     std::io::stdin()
         .read_line(&mut input)

@@ -4,80 +4,30 @@ mod config;
 mod game;
 mod memory;
 mod validation;
-use core::panic;
 use std::{
-    error::Error,
     sync::mpsc::{Receiver, Sender, channel},
     thread::sleep,
     time::Duration,
 };
 
-use crate::game::state::GameState;
-use crate::memory::MemoryManager;
+use crate::{client::models::MatchedResponse, memory::MemoryManager};
 use crate::validation::{Validator, Validity};
 use crate::{cli::update_status, config::ConfigError};
-use crate::{
-    client::{ClientManager, ClientState},
-    config::Config,
-};
+use crate::{client::ClientManager, config::Config};
+use crate::{ game::state::GameState};
 
 fn main() {
     println!("=== ATLAS OBSERVER ===\n");
 
-    match Config::load().as_mut() {
-        Ok(conf) => {
-            if conf.token.is_empty() {
-                conf.token = cli::prompt_token();
-                if let Err(e) = conf.save() {
-                    eprintln!("{}", e);
-                    exit_app();
-                }
-            }
-        }
-        Err(e) => match e {
-            ConfigError::ParseError(msg) => {
-                eprintln!("Config Error: {}", e);
-                exit_app();
-            }
-            _ => {
-                eprintln!("Config Error: {}\nTrying to create a config file...", e);
-                let new_conf = Config::new();
-                match new_conf.save() {
-                    Ok(_) => {
-                        println!("Config file created successfully. Please set your config there.")
-                    }
-                    Err(e) => eprintln!("Config Error: {}", e),
-                }
-                exit_app();
-            }
-        },
-    }
+    let config = load_config().unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        exit_app(1)
+    });
 
-    let client = match ClientManager::new(ClientState::Idle) {
-        Ok(cli) => cli,
-        Err(e) => {
-            println!("Could not start client: {}", e);
-            exit_app();
-            panic!("Unreachable line");
-        }
-    };
-
-    update_status("Cheking the server...".to_string());
-    match client.validate_token() {
-        Ok(vr) => update_status(format!("Logged as {}", vr.discord_username)),
-        Err(e) => {
-            eprint!("Client Error: {}", e);
-            exit_app();
-        }
-    }
-
-    match cli::host_or_join_input() {
-        Some(s) => client.update_state(s),
-        None => std::process::exit(1),
-    };
+    let client = create_client(config);
+    host_or_join(&client);
 
     let (tx, rx) = channel();
-
     let m = std::thread::spawn(move || memory_thread(tx));
     let v = std::thread::spawn(move || validator_thread(rx, client));
 
@@ -88,22 +38,81 @@ fn main() {
         update_status("Something went wront in the validator thread".to_string());
     }
 
-    exit_app();
+    exit_app(0)
 }
 
-fn exit_app() {
+fn create_client(config: Config) -> ClientManager {
+    let client = ClientManager::new(config).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        exit_app(1)
+    });
+
+    update_status("Cheking the server...".to_string());
+    match client.validate_token() {
+        Ok(vr) => update_status(format!("Logged as {}", vr.discord_username)),
+        Err(e) => {
+            eprintln!("Client Error: {}", e);
+            exit_app(1)
+        }
+    }
+    client
+}
+
+fn load_config() -> Result<Config, ConfigError> {
+    let mut config = Config::load().or_else(|e| match e {
+        ConfigError::ParseError(_) => Err(e),
+        _ => {
+            Config::new().save()?;
+            Err(e)
+        }
+    })?;
+
+    if config.token.is_empty() {
+        config.token = cli::prompt_token();
+        config.save()?;
+        update_status("Token updated, please restart this application.".to_string());
+        exit_app(1)
+    }
+
+    Ok(config)
+}
+
+fn host_or_join(client: &ClientManager) {
+    let mut is_connected = false;
+
+    while !is_connected {
+        match cli::host_or_join_input() {
+            Some(s) => {
+                client.update_state(s);
+                match client.send_queue_request() {
+                    Ok(queue) => {
+                            update_status(format!("Playing ranked against {}", queue.opponent_discord_username));
+                            is_connected = true;
+                    },
+                    Err(e) => {
+                        eprintln!("Client Error: {}", e);
+                        exit_app(1);
+                    }
+                }
+            }
+            None => std::process::exit(0),
+        };
+    }
+}
+
+fn exit_app(code: i32) -> ! {
     println!("Press Enter to exit.");
     let mut input = String::new();
     std::io::stdin()
         .read_line(&mut input)
         .expect("Could not read input.");
-    std::process::exit(1);
+    std::process::exit(code)
 }
 
 fn memory_thread(tx: Sender<GameState>) {
     let mut memory = MemoryManager::new();
 
-    'outer: loop {
+    loop {
         if memory.is_running() {
             update_status(format!("MBAA session detected. Restart MBAA.exe."));
 
@@ -154,7 +163,9 @@ fn validator_thread(rx: Receiver<GameState>, client: ClientManager) {
                 }
                 Validity::MatchFinished(result) => {
                     update_status(format!("Match ended: {}", &result));
-                    match client.send_result(&result) {
+                    update_status("Sending match to the server...".to_string());
+                    let client = client.clone();
+                    std::thread::spawn(move || match client.send_result(&result) {
                         Ok(res) => match res.text() {
                             Ok(msg) => update_status(msg),
                             Err(_) => update_status(
@@ -163,9 +174,8 @@ fn validator_thread(rx: Receiver<GameState>, client: ClientManager) {
                         },
                         Err(e) => {
                             update_status(format!("Could not send match to the server: {:?}", e));
-                            break;
                         }
-                    }
+                    });
                 }
                 _ => {}
             },

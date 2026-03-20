@@ -3,7 +3,7 @@ use std::io::ErrorKind;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum ConfigError {
     #[error("could not find config file")]
     FileNotFound,
@@ -15,7 +15,7 @@ pub enum ConfigError {
     ReadError(String),
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     pub server_url: String,
     pub token: String,
@@ -54,7 +54,8 @@ impl Config {
                 error_kind => Err(ConfigError::ReadError(format!("{}", error_kind))),
             },
         }?;
-        let conf: Config = toml::from_str(&content).map_err(|e| ConfigError::ParseError(e.to_string()))?;
+        let conf: Config =
+            toml::from_str(&content).map_err(|e| ConfigError::ParseError(e.to_string()))?;
         if conf.server_url.is_empty() {
             return Err(ConfigError::ParseError("server_url is empty.".to_string()));
         }

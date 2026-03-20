@@ -1,17 +1,19 @@
-use std::{
-    fmt::format,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use crate::{
-    client::{server_response::ValidationResponse, state::ClientState},
+    client::{
+        models::{MatchedResponse, QueueRequest, ValidationResponse},
+        state::ClientState,
+    },
     config::{Config, ConfigError},
     validation::result::MatchResult,
 };
 use reqwest::{
+    StatusCode,
     blocking::{Client, Response},
     header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue},
 };
+use serde::Serialize;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -24,11 +26,14 @@ pub enum ClientError {
     AuthorizationError,
     #[error("could not read client state")]
     StateError,
+    #[error("invalid state detected: '{0}'")]
+    InvalidStateError(ClientState),
     #[error("could not parse '{0}'")]
     ParseError(String),
 }
 
 /// Handles the requests to the server
+#[derive(Debug, Clone)]
 pub struct ClientManager {
     token: String,
     server_url: String,
@@ -37,19 +42,20 @@ pub struct ClientManager {
 }
 
 impl ClientManager {
-    pub fn new(state: ClientState) -> Result<Self, ConfigError> {
-        Self::from_config(state, Config::load()?)
-    }
-
-    pub fn new_test(state: ClientState) -> Result<Self, ConfigError> {
-        Self::from_config(state, Config::load_test()?)
-    }
-
-    fn from_config(state: ClientState, config: Config) -> Result<Self, ConfigError> {
+    pub fn new(config: Config) -> Result<Self, ConfigError> {
         Ok(ClientManager {
             token: config.token,
             server_url: config.server_url,
-            state: Arc::new(Mutex::new(state)),
+            state: Arc::new(Mutex::new(ClientState::Idle)),
+            client: Client::new(),
+        })
+    }
+
+    pub fn new_test(config: Config) -> Result<Self, ConfigError> {
+        Ok(ClientManager {
+            token: config.token,
+            server_url: config.server_url,
+            state: Arc::new(Mutex::new(ClientState::Idle)),
             client: Client::new(),
         })
     }
@@ -70,16 +76,22 @@ impl ClientManager {
         headers
     }
 
-    pub fn validate_token(&self) -> Result<ValidationResponse, ClientError> {
-        let res = self
-            .client
-            .post(self.validation_path())
+    fn send_post<T: Serialize>(&self, path: String, body: &T) -> Result<Response, ClientError> {
+        let url = format!("{}/{}", self.server_url, path);
+        self.client
+            .post(url)
             .headers(self.construct_headers())
+            .json(body)
             .send()
-            .map_err(|e| ClientError::RequestError(e.to_string()))?;
+            .map_err(|_| ClientError::RequestError("result failed to reach the server".to_string()))
+    }
 
+    pub fn validate_token(&self) -> Result<ValidationResponse, ClientError> {
+        let res = self.send_post("auth/validate".to_string(), &"".to_string())?;
         if res.status().is_success() {
-            return res.json().map_err(|_| ClientError::ParseError("validation response".to_string()));
+            return res
+                .json()
+                .map_err(|_| ClientError::ParseError("validation response".to_string()));
         }
         if res.status().as_u16() == 401 {
             return Err(ClientError::AuthorizationError);
@@ -88,14 +100,7 @@ impl ClientManager {
     }
 
     pub fn send_result(&self, result: &MatchResult) -> Result<Response, ClientError> {
-        let res = self
-            .client
-            .post(self.result_path())
-            .headers(self.construct_headers())
-            .json(&result)
-            .send()
-            .map_err(|e| ClientError::RequestError(e.to_string()))?;
-
+        let res = self.send_post("api/match".to_string(), &result)?;
         if res.status().is_success() {
             Ok(res)
         } else {
@@ -103,13 +108,32 @@ impl ClientManager {
         }
     }
 
-    fn result_path(&self) -> String {
-        // TODO: get player from token instead of param
-        format!("{}/api/match", self.server_url)
-    }
+    pub fn send_queue_request(&self) -> Result<MatchedResponse, ClientError> {
+        let state = self.clone_state();
+        let state = state.lock().map_err(|_| ClientError::StateError)?.to_owned();
+        let res = match state {
+            ClientState::HostingRanked(session_id) => {
+                let body = QueueRequest { session_id };
+                self.send_post("api/queue".to_string(), &body)?
+            }
+                ClientState::JoinedRanked(session_id) => {
+                let body = String::new();
+                self.send_post(format!("api/queue/{}", session_id), &body)?
+            }
+            s => Err(ClientError::InvalidStateError(s))?,
+        };
 
-    fn validation_path(&self) -> String {
-        format!("{}/auth/validate", self.server_url)
+        match res.status() {
+            StatusCode::REQUEST_TIMEOUT => Err(ClientError::ServerError(res.status().as_u16())),
+            _ => {
+                if res.status().is_success() {
+                    return Ok(res
+                        .json()
+                        .map_err(|_| ClientError::ParseError("QueueResponse".to_string()))?);
+                }
+                Err(ClientError::ServerError(res.status().as_u16()))
+            }
+        }
     }
 
     pub fn update_state(&self, state: ClientState) -> Result<(), ClientError> {
@@ -152,8 +176,10 @@ mod tests {
 
     #[test]
     fn test_send_result() {
-        let client1 =
-            ClientManager::new_test(ClientState::hosting()).expect("Failed to load config.");
+        let config = Config::load_test().unwrap();
+        let client1 = ClientManager::new_test(config.clone()).expect("Failed to load config.");
+        client1.update_state(ClientState::hosting());
+
         let session_id = client1
             .state
             .lock()
@@ -161,15 +187,16 @@ mod tests {
             .session()
             .expect("Session id not set for client")
             .to_string();
-        let client2 = ClientManager::new_test(ClientState::JoinedRanked(session_id.clone()))
-            .expect("Failed to load config.");
+        let client2 = ClientManager::new_test(config).expect("Failed to load config.");
+        client2.update_state(ClientState::JoinedRanked(session_id.clone()));
+
         let result1 = mock_match_result(session_id.clone(), 1);
         let result2 = mock_match_result(session_id, 2);
 
         let (tx1, rx1) = std::sync::mpsc::channel();
         let (tx2, rx2) = std::sync::mpsc::channel();
 
-        println!("Sending first request to: {}", client1.result_path());
+        println!("Sending first request to: {}/api/match", client1.server_url);
         let f = std::thread::spawn(move || {
             let req1 = client1.send_result(&result1);
             println!("First request got a response");

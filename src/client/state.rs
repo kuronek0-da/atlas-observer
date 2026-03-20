@@ -1,3 +1,5 @@
+use std::fmt;
+
 use rand::RngExt;
 
 #[derive(Debug, Clone)]
@@ -8,7 +10,6 @@ pub enum ClientState {
     HostingRanked(String),
     /// Joined, not in match yet
     JoinedRanked(String),
-    MatchInProgress(String),
 }
 
 impl ClientState {
@@ -20,7 +21,6 @@ impl ClientState {
         match self {
             ClientState::HostingRanked(s) => Some(&s),
             ClientState::JoinedRanked(s) => Some(&s),
-            ClientState::MatchInProgress(s) => Some(&s),
             _ => None,
         }
     }
@@ -31,5 +31,11 @@ impl ClientState {
             .map(|_| rng.sample(rand::distr::Alphanumeric) as char)
             .collect::<String>()
             .to_uppercase()
+    }
+}
+
+impl std::fmt::Display for ClientState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
     }
 }
