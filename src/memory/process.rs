@@ -206,7 +206,7 @@ impl MemoryManager {
             .map_err(|_| MemoryError::ParseFailed("character", char_u32))?;
         let moon =
             Moon::try_from(moon_u32).map_err(|_| MemoryError::ParseFailed("moon", moon_u32))?;
-        Ok(state::Player { char, moon, score })
+        Ok(state::Player { character: char, moon, score })
     }
 }
 

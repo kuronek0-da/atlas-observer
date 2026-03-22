@@ -60,7 +60,7 @@ impl GameTimers {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Player {
-    pub char: GameChar,
+    pub character: GameChar,
     pub score: u32,
     pub moon: Moon,
 }

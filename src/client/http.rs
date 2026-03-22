@@ -167,12 +167,12 @@ mod tests {
 
     fn mock_match_result(session_id: String, sender_pos: u8) -> MatchResult {
         let p1 = Player {
-            char: GameChar::Akiha,
+            character: GameChar::Akiha,
             moon: Moon::Half,
             score: 2,
         };
         let p2 = Player {
-            char: GameChar::Seifuku,
+            character: GameChar::Seifuku,
             moon: Moon::Crescent,
             score: 1,
         };

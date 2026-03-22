@@ -28,7 +28,7 @@ pub struct MatchResult {
 
 impl fmt::Display for MatchResult {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let p1 = &self.p2;
+        let p1 = &self.p1;
         let p2 = &self.p2;
         write!(
             f,
@@ -38,11 +38,11 @@ impl fmt::Display for MatchResult {
             } else {
                 "Lost"
             },
-            p1.char,
-            p2.moon,
+            p1.character,
+            p1.moon,
             p1.score,
             p2.score,
-            p2.char,
+            p2.character,
             p2.moon,
             self.fmt_real_timer(),
             self.session_id
