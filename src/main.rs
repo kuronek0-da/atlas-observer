@@ -10,22 +10,25 @@ use std::{
     time::Duration,
 };
 
-use crate::{client::models::MatchedResponse, memory::MemoryManager};
 use crate::validation::{Validator, Validity};
 use crate::{cli::update_status, config::ConfigError};
 use crate::{client::ClientManager, config::Config};
-use crate::{ game::state::GameState};
+use crate::{client::http::ClientError, game::state::GameState};
+use crate::{client::models::MatchedResponse, memory::MemoryManager};
 
 fn main() {
     println!("=== ATLAS OBSERVER ===\n");
 
+    println!(
+        "[Warning]\nRanked mode is only supported on cccaster v3.1.008.\nOther builds may produce incorrect results.\n"
+    );
     let config = load_config().unwrap_or_else(|e| {
         eprintln!("{}", e);
         exit_app(1)
     });
 
     let client = create_client(config);
-    host_or_join(&client);
+    cli::host_or_join(&client);
 
     let (tx, rx) = channel();
     let m = std::thread::spawn(move || memory_thread(tx));
@@ -77,30 +80,38 @@ fn load_config() -> Result<Config, ConfigError> {
     Ok(config)
 }
 
-fn host_or_join(client: &ClientManager) {
-    let mut is_connected = false;
+// fn host_or_join(client: &ClientManager) {
+//     println!("This system uses codes/keywords to pair players.");
+//     println!(
+//         "Commands:\n - 'host <code>' or 'host' to generate a random code\n - 'join <code>' to join\n - 'stop' to cancel"
+//     );
+//     loop {
+//         match cli::host_or_join_input() {
+//             Some(s) => {
+//                 client.update_state(s);
+//                 match client.send_queue_request() {
+//                     Ok(queue) => {
+//                         update_status(format!(
+//                             "Playing ranked against {}",
+//                             queue.opponent_discord_username
+//                         ));
+//                         break;
+//                     }
+//                     Err(ClientError::ServerError(409)) => {
+//                         update_status("Session code already in use, try again.".to_string());
+//                     }
+//                     Err(e) => {
+//                         eprintln!("Client Error: {}", e);
+//                         exit_app(1);
+//                     }
+//                 }
+//             }
+//             None => std::process::exit(0),
+//         }
+//     }
+// }
 
-    while !is_connected {
-        match cli::host_or_join_input() {
-            Some(s) => {
-                client.update_state(s);
-                match client.send_queue_request() {
-                    Ok(queue) => {
-                            update_status(format!("Playing ranked against {}", queue.opponent_discord_username));
-                            is_connected = true;
-                    },
-                    Err(e) => {
-                        eprintln!("Client Error: {}", e);
-                        exit_app(1);
-                    }
-                }
-            }
-            None => std::process::exit(0),
-        };
-    }
-}
-
-fn exit_app(code: i32) -> ! {
+pub fn exit_app(code: i32) -> ! {
     println!("Press Enter to exit.");
     let mut input = String::new();
     std::io::stdin()
@@ -173,7 +184,7 @@ fn validator_thread(rx: Receiver<GameState>, client: ClientManager) {
                             ),
                         },
                         Err(e) => {
-                            update_status(format!("Could not send match to the server: {:?}", e));
+                            update_status(format!("Could not send match to the server: {}", e));
                         }
                     });
                 }

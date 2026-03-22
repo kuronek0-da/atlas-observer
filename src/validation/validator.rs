@@ -31,7 +31,7 @@ impl Validator {
                 players,
             } => {
                 if !matches!(client_mode, ClientMode::Host | ClientMode::Client) {
-                    return Ok(Validity::Invalid("not in netplay".to_string()));
+                    return Ok(Validity::Invalid(format!("invalid client mode: {:?}", client_mode)));
                 }
 
                 self.update_matchstate(&game_mode);
@@ -63,7 +63,7 @@ impl Validator {
                 client_mode,
             } => {
                 if !matches!(client_mode, ClientMode::Host | ClientMode::Client) {
-                    return Ok(Validity::Invalid("not in netplay".to_string()));
+                    return Ok(Validity::Invalid(format!("invalid client mode: {:?}", client_mode)));
                 }
 
                 self.update_matchstate(&game_mode);

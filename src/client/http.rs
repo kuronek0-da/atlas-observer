@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use crate::{
     client::{
@@ -47,7 +50,10 @@ impl ClientManager {
             token: config.token,
             server_url: config.server_url,
             state: Arc::new(Mutex::new(ClientState::Idle)),
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(Duration::from_secs(330)) // 5min30s
+                .build()
+                .unwrap(),
         })
     }
 
@@ -83,7 +89,9 @@ impl ClientManager {
             .headers(self.construct_headers())
             .json(body)
             .send()
-            .map_err(|_| ClientError::RequestError("result failed to reach the server".to_string()))
+            .map_err(|e| {
+                ClientError::RequestError("error while sending request to the server.".to_string())
+            })
     }
 
     pub fn validate_token(&self) -> Result<ValidationResponse, ClientError> {
@@ -110,13 +118,16 @@ impl ClientManager {
 
     pub fn send_queue_request(&self) -> Result<MatchedResponse, ClientError> {
         let state = self.clone_state();
-        let state = state.lock().map_err(|_| ClientError::StateError)?.to_owned();
+        let state = state
+            .lock()
+            .map_err(|_| ClientError::StateError)?
+            .to_owned();
         let res = match state {
             ClientState::HostingRanked(session_id) => {
                 let body = QueueRequest { session_id };
                 self.send_post("api/queue".to_string(), &body)?
             }
-                ClientState::JoinedRanked(session_id) => {
+            ClientState::JoinedRanked(session_id) => {
                 let body = String::new();
                 self.send_post(format!("api/queue/{}", session_id), &body)?
             }
