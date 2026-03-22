@@ -202,7 +202,9 @@ mod tests {
         client2.update_state(ClientState::JoinedRanked(session_id.clone()));
 
         let result1 = mock_match_result(session_id.clone(), 1);
+        println!("{}", result1);
         let result2 = mock_match_result(session_id, 2);
+        println!("{}", result2);
 
         let (tx1, rx1) = std::sync::mpsc::channel();
         let (tx2, rx2) = std::sync::mpsc::channel();
