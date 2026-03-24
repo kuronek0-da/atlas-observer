@@ -15,9 +15,17 @@ pub enum ConfigError {
     ReadError(String),
 }
 
+const SERVER_URL: Option<&str> = option_env!("SERVER_URL");
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
+    #[serde(skip_serializing)]
     pub server_url: String,
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ConfigFile {
     pub token: String,
 }
 
@@ -32,7 +40,7 @@ impl Config {
 
     pub fn new() -> Self {
         Config {
-            server_url: String::new(),
+            server_url: SERVER_URL.unwrap_or("http://localhost:8080").to_string(),
             token: String::new(),
         }
     }
@@ -54,11 +62,11 @@ impl Config {
                 error_kind => Err(ConfigError::ReadError(format!("{}", error_kind))),
             },
         }?;
-        let conf: Config =
+        let conf: ConfigFile =
             toml::from_str(&content).map_err(|e| ConfigError::ParseError(e.to_string()))?;
-        if conf.server_url.is_empty() {
-            return Err(ConfigError::ParseError("server_url is empty.".to_string()));
-        }
-        Ok(conf)
+        Ok(Config {
+            server_url: SERVER_URL.unwrap_or("http://localhost:8080").to_string(),
+            token: conf.token
+        })
     }
 }

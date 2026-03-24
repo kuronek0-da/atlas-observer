@@ -1,4 +1,6 @@
 /target
+/atlas
 ranked.log
 .cargo
 *.exe
+config.toml

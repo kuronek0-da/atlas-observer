@@ -10,20 +10,29 @@ use std::{
     time::Duration,
 };
 
-use crate::validation::{Validator, Validity};
 use crate::{cli::update_status, config::ConfigError};
 use crate::{client::ClientManager, config::Config};
 use crate::{client::http::ClientError, game::state::GameState};
 use crate::{client::models::MatchedResponse, memory::MemoryManager};
+use crate::{
+    memory::addresses::{ClientMode, GameMode, LocalPlayer},
+    validation::{Validator, Validity},
+};
 
 fn main() {
     println!("=== ATLAS OBSERVER ===\n");
+    println!("DBG ver");
 
     println!(
         "[Warning]\nRanked mode is only supported on cccaster v3.1.008.\nOther builds may produce incorrect results.\n"
     );
     let config = load_config().unwrap_or_else(|e| {
-        eprintln!("{}", e);
+        eprintln!("Config Error: {}", e);
+        println!("Creating a new config file...");
+        match Config::new().save() {
+            Ok(_) => println!("File created successfully, restart Atlas."),
+            Err(e) => eprintln!("Could not create a config file. Try running as admin."),
+        }
         exit_app(1)
     });
 
@@ -64,10 +73,7 @@ fn create_client(config: Config) -> ClientManager {
 fn load_config() -> Result<Config, ConfigError> {
     let mut config = Config::load().or_else(|e| match e {
         ConfigError::ParseError(_) => Err(e),
-        _ => {
-            Config::new().save()?;
-            Err(e)
-        }
+        _ => Err(e),
     })?;
 
     if config.token.is_empty() {
@@ -138,10 +144,12 @@ fn memory_thread(tx: Sender<GameState>) {
             sleep(Duration::from_secs(2));
         }
 
+        let mut was_in_game = true;
         update_status(format!("Attached to MBAA.exe"));
         loop {
             match memory.poll() {
                 Ok(state) => {
+                    report_gamestate(&state, &mut was_in_game);
                     if tx.send(state).is_err() {
                         update_status(format!("Receiver dropped, shutting down memory thread."));
                         return;
@@ -159,6 +167,25 @@ fn memory_thread(tx: Sender<GameState>) {
             }
             sleep(Duration::from_millis(16));
         }
+    }
+}
+
+fn report_gamestate(state: &GameState, was_in_game: &mut bool) {
+    match state {
+        GameState::NotInGame { .. } if *was_in_game => {
+            *was_in_game = false;
+            update_status("Waiting for the match to start...".to_string());
+        }
+        GameState::InGame {
+            local_player,
+            players,
+            client_mode,
+            ..
+        } if !*was_in_game => {
+            *was_in_game = true;
+            update_status("Match running...".to_string());
+        }
+        _ => {}
     }
 }
 

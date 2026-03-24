@@ -158,14 +158,20 @@ impl ClientManager {
 mod tests {
     use std::{thread::sleep, time::Duration};
 
-    use crate::game::{
+    use crate::{game::{
         game_char::{GameChar, Moon},
         state::{GameTimers, Player},
-    };
+    }, memory::addresses::ClientMode};
 
     use super::*;
 
-    fn mock_match_result(session_id: String, sender_pos: u8) -> MatchResult {
+    fn mock_match_result(session_id: String, client_mode: ClientMode) -> MatchResult {
+        let local_player = match client_mode {
+            ClientMode::Host => 1,
+            _ => 2,
+        };
+        let timers = GameTimers::new(10000, 1200, 4000);
+
         let p1 = Player {
             character: GameChar::Akiha,
             moon: Moon::Half,
@@ -176,11 +182,13 @@ mod tests {
             moon: Moon::Crescent,
             score: 1,
         };
+        let players = [p1, p2];
         MatchResult::new(
-            sender_pos,
-            [p1, p2],
-            GameTimers::new(0, 0, 4000),
             session_id,
+            client_mode,
+            local_player,
+            players,
+            timers
         )
         .expect("Could not mock MatchResult")
     }
@@ -201,9 +209,9 @@ mod tests {
         let client2 = ClientManager::new_test(config).expect("Failed to load config.");
         client2.update_state(ClientState::JoinedRanked(session_id.clone()));
 
-        let result1 = mock_match_result(session_id.clone(), 1);
+        let result1 = mock_match_result(session_id.clone(), ClientMode::Host);
         println!("{}", result1);
-        let result2 = mock_match_result(session_id, 2);
+        let result2 = mock_match_result(session_id, ClientMode::Client);
         println!("{}", result2);
 
         let (tx1, rx1) = std::sync::mpsc::channel();

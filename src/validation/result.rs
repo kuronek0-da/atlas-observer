@@ -1,4 +1,8 @@
-use crate::game::state::{GameTimers, Player};
+use crate::{
+    game::state::{GameTimers, Player},
+    memory::addresses::ClientMode,
+};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{fmt, time::SystemTime};
 use thiserror::Error;
@@ -9,6 +13,13 @@ pub enum StateError {
     MatchResultError(String),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum SenderRole {
+    Host,
+    Client,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Winner {
     Player1,
@@ -17,7 +28,8 @@ pub enum Winner {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MatchResult {
-    sender_position: u8,
+    host_position: Option<u8>,
+    sender_role: SenderRole,
     p1: Player,
     p2: Player,
     session_id: String,
@@ -32,18 +44,13 @@ impl fmt::Display for MatchResult {
         let p2 = &self.p2;
         write!(
             f,
-            "{} | {:?}-{:?} ({}x{}) {:?}-{:?} | Duration: {} | Code/Session: {}",
-            if self.winner() == self.sender_position {
-                "Won"
-            } else {
-                "Lost"
-            },
-            p1.character,
+            "{:?}-{:?} ({}x{}) {:?}-{:?} | Duration: {} | Code/Session: {}",
             p1.moon,
+            p1.character,
             p1.score,
             p2.score,
-            p2.character,
             p2.moon,
+            p2.character,
             self.fmt_real_timer(),
             self.session_id
         )
@@ -52,27 +59,33 @@ impl fmt::Display for MatchResult {
 
 impl MatchResult {
     pub fn new(
-        sender_position: u8,
+        session_id: String,
+        client_mode: ClientMode,
+        local_player: u8,
         players: [Player; 2],
         timers: GameTimers,
-        session_id: String,
     ) -> Result<Self, StateError> {
         let [p1, p2] = players;
 
         let real_timer = timers.real_timer(); // Can be as long as the match lasts
+
+        let mut sender_role = SenderRole::Host;
+        let host_position = match client_mode {
+            ClientMode::Host => Some(local_player),
+            ClientMode::Client => {
+                sender_role = SenderRole::Client;
+                None
+            }
+            _ => Err(StateError::MatchResultError(
+                "role state mut be host or client".to_string(),
+            ))?,
+        };
 
         if real_timer <= 240 {
             // 1s = 24 in the counter
             return Err(StateError::MatchResultError(
                 "match must be at least 10 seconds long in real time".to_string(),
             ));
-        }
-
-        if sender_position != 1 && sender_position != 2 {
-            return Err(StateError::MatchResultError(format!(
-                "invalid player position: {}",
-                sender_position
-            )));
         }
 
         if p1.score == p2.score {
@@ -82,7 +95,8 @@ impl MatchResult {
             )));
         }
         return Ok(MatchResult {
-            sender_position,
+            host_position,
+            sender_role,
             p1,
             p2,
             session_id,

@@ -15,6 +15,7 @@ pub enum GameState {
     NotInGame {
         game_mode: GameMode,
         client_mode: ClientMode,
+        host_position: u8,
     },
 }
 

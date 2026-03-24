@@ -115,11 +115,11 @@ impl MemoryManager {
         caster_process: HANDLE,
     ) -> Result<GameState, MemoryError> {
         let game_mode = self.read_mode(mb_process)?;
+        let local_player = self.read_local_player(caster_process)?;
+        let client_mode = self.read_client_mode(caster_process)?;
         match game_mode {
             GameMode::InGame | GameMode::Retry => {
                 // CCCaster
-                let local_player = self.read_local_player(caster_process)?;
-                let client_mode = self.read_client_mode(caster_process)?;
                 // MBAA
                 let timers = self.read_timers(mb_process)?;
                 let players = self.read_players(mb_process)?;
@@ -134,7 +134,8 @@ impl MemoryManager {
             }
             _ => Ok(GameState::NotInGame {
                 game_mode,
-                client_mode: self.read_client_mode(caster_process)?,
+                client_mode,
+                host_position: local_player as u8,
             }),
         }
     }
