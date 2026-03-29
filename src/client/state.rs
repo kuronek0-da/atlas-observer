@@ -2,7 +2,7 @@ use std::fmt;
 
 use rand::RngExt;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ClientState {
     /// Not in ranked
     Idle,

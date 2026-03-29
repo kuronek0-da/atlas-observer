@@ -33,6 +33,8 @@ pub enum ClientError {
     InvalidStateError(ClientState),
     #[error("could not parse '{0}'")]
     ParseError(String),
+    #[error("content not found")]
+    NotFoundError,
 }
 
 /// Handles the requests to the server
@@ -136,6 +138,7 @@ impl ClientManager {
 
         match res.status() {
             StatusCode::REQUEST_TIMEOUT => Err(ClientError::ServerError(res.status().as_u16())),
+            StatusCode::NOT_FOUND => Err(ClientError::NotFoundError),
             _ => {
                 if res.status().is_success() {
                     return Ok(res

@@ -46,7 +46,7 @@ player_id = 1
 
 ```
 Commands:
-  host          Generate a session code and wait for opponent
+  host <code>   Generate/Insert a session code and wait for opponent, code input is optional
   join <code>   Join a ranked session using a code from your opponent
   stop          Cancel ranked mode
 ```
