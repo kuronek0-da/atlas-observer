@@ -6,11 +6,17 @@ mod memory;
 mod ui;
 mod validation;
 use std::{
-    sync::mpsc::{Receiver, Sender, channel},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, Sender, channel},
+    },
     thread::sleep,
     time::Duration,
 };
 
+use crate::memory::MemoryManager;
+use crate::validation::{Validator, Validity};
 use crate::{
     cli::update_status,
     client::ClientState,
@@ -19,24 +25,18 @@ use crate::{
 };
 use crate::{client::ClientManager, config::Config};
 use crate::{client::http::ClientError, game::state::GameState};
-use crate::{client::models::MatchedResponse, memory::MemoryManager};
-use crate::{
-    memory::addresses::{ClientMode, GameMode, LocalPlayer},
-    validation::{Validator, Validity},
-};
 
 fn main() {
-    println!("=== ATLAS OBSERVER ===\n");
-
-    println!(
-        "[Warning]\nRanked mode is only supported on cccaster v3.1.008.\nOther builds may produce incorrect results.\n"
-    );
-
     loop {
         let (log_tx, log_rx) = channel::<String>();
         let (cmd_tx, cmd_rx) = channel::<AppCommand>();
 
-        let config = load_config(&log_tx);
+        log(
+            "Ranked mode is only supported on cccaster v3.1.008.".to_string(),
+            &log_tx,
+        );
+
+        let config = load_config();
         let client = create_client(config, &log_tx);
 
         let mut app = AppUI::new(log_rx, cmd_tx);
@@ -53,15 +53,14 @@ fn main() {
 }
 
 fn runner(client: ClientManager, log_tx: Sender<String>, cmd_rx: Receiver<AppCommand>) {
-    loop {
+    'outer: loop {
         log_tx.send("Waiting for command.".to_string()).ok();
 
-        let client_state;
-        match cmd_rx.recv().expect("Sender dropped.") {
-            AppCommand::Host(state) => client_state = state,
-            AppCommand::Join(state) => client_state = state,
+        let client_state = match cmd_rx.recv().expect("Sender dropped.") {
+            AppCommand::Host(state) => state,
+            AppCommand::Join(state) => state,
             _ => continue,
-        }
+        };
 
         let waiting_msg = match &client_state {
             ClientState::HostingRanked(code) => format!("Hosting with code '{}'", code),
@@ -74,22 +73,56 @@ fn runner(client: ClientManager, log_tx: Sender<String>, cmd_rx: Receiver<AppCom
             continue;
         }
 
-        // End of loop
+        let is_cancelled = Arc::new(AtomicBool::new(false));
+        let is_cancelled_clone = is_cancelled.clone();
+        let client_clone = client.clone();
+        let log_tx_clone = log_tx.clone();
 
         log(waiting_msg, &log_tx);
-        // create a thread if cmd was join or host 
-        match client.send_queue_request() {
-            Ok(res) => {
-                log(
-                    format!("Player connected: {}", res.opponent_discord_username),
-                    &log_tx,
-                );
+
+        let queue_thread = std::thread::spawn(move || {
+            let req = client_clone.send_queue_request();
+            if is_cancelled_clone.load(Ordering::Relaxed) {
+                return;
             }
-            Err(ClientError::ServerError(408)) => log("Request expired".to_string(), &log_tx),
-            Err(ClientError::NotFoundError) => log("Match not found".to_string(), &log_tx),
-            Err(e) => log(format!("Client Error: {}", e), &log_tx),
+            match req {
+                Ok(res) => {
+                    log(
+                        format!("Player connected: {}", res.opponent_discord_username),
+                        &log_tx_clone,
+                    );
+                    return;
+                }
+                Err(ClientError::ServerError(408)) => {
+                    log("Request expired".to_string(), &log_tx_clone)
+                }
+                Err(ClientError::NotFoundError) => {
+                    log("Match not found".to_string(), &log_tx_clone)
+                }
+                Err(e) => log(format!("Client Error: {}", e), &log_tx_clone),
+            }
+            is_cancelled_clone.store(true, Ordering::Relaxed);
+        });
+
+        loop {
+            match cmd_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(AppCommand::Stop(state)) => {
+                    is_cancelled.store(true, Ordering::Relaxed);
+                    if let Err(e) = client.update_state(state) {
+                        log(format!("Client Error: {}", e), &log_tx);
+                    }
+                    log("Queue canceled.".to_string(), &log_tx);
+                    break;
+                }
+                _ => {}
+            }
+            if queue_thread.is_finished() {
+                if is_cancelled.load(Ordering::Relaxed) {
+                    break;
+                }
+                break 'outer;
+            }
         }
-        // loop to see if message was returned, continue if not
     }
 
     let log_tx_memory = log_tx.clone();
@@ -116,7 +149,7 @@ fn runner(client: ClientManager, log_tx: Sender<String>, cmd_rx: Receiver<AppCom
 
 fn create_client(config: Config, log_tx: &Sender<String>) -> ClientManager {
     let client = ClientManager::new(config).unwrap_or_else(|e| {
-        log(format!("{}", e), log_tx);
+        eprintln!("{}", e);
         exit_app(1)
     });
 
@@ -124,35 +157,29 @@ fn create_client(config: Config, log_tx: &Sender<String>) -> ClientManager {
     match client.validate_token() {
         Ok(vr) => log(format!("Logged as {}", vr.discord_username), log_tx),
         Err(e) => {
-            log(format!("Client Error: {}", e), log_tx);
+            eprintln!("Client Error: {}", e);
             exit_app(1)
         }
     }
     client
 }
 
-fn load_config(log_tx: &Sender<String>) -> Config {
+fn load_config() -> Config {
     let mut config = Config::load().unwrap_or_else(|e| match e {
         ConfigError::FileNotFound => {
-            log(format!("Config Error: {}", e), log_tx);
-            log(
-                "Trying to creating a new config file...".to_string(),
-                log_tx,
-            );
+            eprintln!("Config Error: {}", e);
+            eprintln!("Trying to creating a new config file...");
             match Config::new().save() {
-                Ok(_) => log(
-                    "File created successfully, restart Atlas.".to_string(),
-                    log_tx,
-                ),
+                Ok(_) => eprintln!("File created successfully, restart Atlas."),
                 Err(e) => {
-                    log(format!("Config Error: {}", e), log_tx);
-                    log("Try running this app as admin.".to_string(), log_tx);
+                    eprintln!("Config Error: {}", e);
+                    eprintln!("Try running this app as admin.");
                 }
             }
             exit_app(1)
         }
         _ => {
-            log(format!("Config Error: {}", e), log_tx);
+            eprintln!("Config Error: {}", e);
             exit_app(1)
         }
     });
@@ -160,13 +187,10 @@ fn load_config(log_tx: &Sender<String>) -> Config {
     if config.token.is_empty() {
         config.token = cli::prompt_token();
         if let Err(e) = config.save() {
-            log(format!("Config Error: {}", e), log_tx);
+            eprintln!("Config Error: {}", e);
             exit_app(1)
         }
-        log(
-            "Token updated, please restart this application.".to_string(),
-            log_tx,
-        );
+        eprintln!("Token updated, please restart this application.");
         exit_app(1)
     }
 
@@ -235,12 +259,7 @@ fn report_gamestate(state: &GameState, was_in_game: &mut bool, log_tx: &Sender<S
             *was_in_game = false;
             log("Waiting for the match to start...".to_string(), log_tx);
         }
-        GameState::InGame {
-            local_player,
-            players,
-            client_mode,
-            ..
-        } if !*was_in_game => {
+        GameState::InGame { .. } if !*was_in_game => {
             *was_in_game = true;
             log("Match running...".to_string(), log_tx);
         }
@@ -250,6 +269,7 @@ fn report_gamestate(state: &GameState, was_in_game: &mut bool, log_tx: &Sender<S
 
 fn validator_thread(rx: Receiver<GameState>, client: ClientManager, log_tx: &Sender<String>) {
     let mut validator = Validator::new(client.clone_state());
+    let mut is_playing = false;
 
     for state in rx {
         match validator.validate(state) {
@@ -279,7 +299,14 @@ fn validator_thread(rx: Receiver<GameState>, client: ClientManager, log_tx: &Sen
                         }
                     });
                 }
-                _ => {}
+                Validity::Valid(session) => {
+                    if !is_playing {
+                        is_playing = true;
+                        if let Err(e) = client.update_state(ClientState::PlayingRanked(session)) {
+                            log(format!("Client Errr: {}", e), log_tx);
+                        }
+                    }
+                }
             },
             Err(e) => {
                 log(format!("Validator error: {:?}", e), log_tx);

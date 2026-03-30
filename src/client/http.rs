@@ -21,8 +21,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ClientError {
-    #[error("request error: '{0}'")]
-    RequestError(String),
+    #[error("failed to execute request or could not reach the server")]
+    RequestError,
     #[error("something went wrong, server status response: '{0}'")]
     ServerError(u16),
     #[error("token expired or is invalid")]
@@ -46,14 +46,16 @@ pub struct ClientManager {
     client: Client,
 }
 
+
 impl ClientManager {
+    // 5 minutes
+    const REQUEST_TIMEOUT_SECS: Duration = Duration::from_secs(300);
     pub fn new(config: Config) -> Result<Self, ConfigError> {
         Ok(ClientManager {
             token: config.token,
             server_url: config.server_url,
             state: Arc::new(Mutex::new(ClientState::Idle)),
             client: Client::builder()
-                .timeout(Duration::from_secs(330)) // 5min30s
                 .build()
                 .unwrap(),
         })
@@ -88,11 +90,12 @@ impl ClientManager {
         let url = format!("{}/{}", self.server_url, path);
         self.client
             .post(url)
+            .timeout(ClientManager::REQUEST_TIMEOUT_SECS)
             .headers(self.construct_headers())
             .json(body)
             .send()
-            .map_err(|e| {
-                ClientError::RequestError("error while sending request to the server.".to_string())
+            .map_err(|_| {
+                ClientError::RequestError
             })
     }
 
@@ -110,7 +113,16 @@ impl ClientManager {
     }
 
     pub fn send_result(&self, result: &MatchResult) -> Result<Response, ClientError> {
-        let res = self.send_post("api/match".to_string(), &result)?;
+        let state = self.state
+            .lock()
+            .map_err(|_| ClientError::StateError)?
+            .to_owned();
+
+        let res = match state {
+            ClientState::PlayingRanked(_) => self.send_post("api/match".to_string(), &result)?,
+            _ => Err(ClientError::InvalidStateError(state))?
+        };
+
         if res.status().is_success() {
             Ok(res)
         } else {

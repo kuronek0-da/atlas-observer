@@ -2,7 +2,6 @@ use crate::{
     game::state::{GameTimers, Player},
     memory::addresses::ClientMode,
 };
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{fmt, time::SystemTime};
 use thiserror::Error;
@@ -11,6 +10,8 @@ use thiserror::Error;
 pub enum StateError {
     #[error("could not create a valid result: '{0}'")]
     MatchResultError(String),
+    #[error("match code/session not found.")]
+    SessionNotFound,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -18,12 +19,6 @@ pub enum StateError {
 pub enum SenderRole {
     Host,
     Client,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum Winner {
-    Player1,
-    Player2,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

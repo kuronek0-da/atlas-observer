@@ -13,7 +13,10 @@ pub fn host_or_join(client: &ClientManager) {
     loop {
         match host_or_join_input() {
             Some(s) => {
-                client.update_state(s);
+                if let Err(e) = client.update_state(s) {
+                    update_status(format!("Client Error: {}", e));
+                    return;
+                }
                 match client.send_queue_request() {
                     Ok(queue) => {
                         update_status(format!(

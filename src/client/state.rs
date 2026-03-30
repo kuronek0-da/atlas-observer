@@ -10,6 +10,8 @@ pub enum ClientState {
     HostingRanked(String),
     /// Joined, not in match yet
     JoinedRanked(String),
+    /// Currently playing ranked
+    PlayingRanked(String),
 }
 
 impl ClientState {

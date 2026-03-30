@@ -26,7 +26,7 @@ pub enum UIError {
 pub enum AppCommand {
     Host(ClientState),
     Join(ClientState),
-    Stop,
+    Stop(ClientState),
     Exit,
 }
 
@@ -128,7 +128,6 @@ impl AppUI {
                     KeyCode::Enter => {
                         let cmd = self.input.trim().to_string();
                         if !cmd.is_empty() {
-                            self.push_log(format!("> {}", cmd.clone()));
                             self.handle_cmd(cmd);
                         }
                         self.input.clear();
@@ -153,17 +152,17 @@ impl AppUI {
     }
 
     fn handle_cmd(&mut self, cmd: String) {
-        let is_host_or_join = self.client_state != ClientState::Idle;
+        let is_idle = self.client_state == ClientState::Idle;
         match cmd.as_str() {
-            "host" if !is_host_or_join => {
+            "host" if is_idle => {
                 self.send_app_cmd(AppCommand::Host(ClientState::hosting()))
             }
-            "stop" if is_host_or_join => self.send_app_cmd(AppCommand::Stop),
+            "stop" if !is_idle => self.send_app_cmd(AppCommand::Stop(ClientState::Idle)),
             "exit" => self.send_app_cmd(AppCommand::Exit),
-            cmd if cmd.starts_with("host ") && is_host_or_join => self.send_app_cmd(
+            cmd if cmd.starts_with("host ") && is_idle => self.send_app_cmd(
                 AppCommand::Host(ClientState::HostingRanked(cmd[5..].to_string())),
             ),
-            cmd if cmd.starts_with("join ") && is_host_or_join => self.send_app_cmd(
+            cmd if cmd.starts_with("join ") && is_idle => self.send_app_cmd(
                 AppCommand::Join(ClientState::JoinedRanked(cmd[5..].to_string())),
             ),
             cmd => self.push_log(format!("Invalid command '{}'", cmd)),
@@ -171,15 +170,16 @@ impl AppUI {
     }
 
     fn send_app_cmd(&mut self, app_cmd: AppCommand) {
-        match &app_cmd {
-            AppCommand::Host(state) => self.client_state = state.clone(),
-            AppCommand::Join(state) => self.client_state = state.clone(),
-            AppCommand::Stop => {
-                self.client_state = ClientState::Idle;
-                return;
+        self.client_state = match &app_cmd {
+            AppCommand::Host(state) => state.clone(),
+            AppCommand::Join(state) => state.clone(),
+            AppCommand::Stop(state) => state.clone(),
+            _ => {
+                self.exit = true;
+                // app will exit
+                ClientState::Idle
             },
-            _ => { self.exit = true }
-        }
+        };
 
         match self.cmd_tx.send(app_cmd) {
             Ok(_) => {}

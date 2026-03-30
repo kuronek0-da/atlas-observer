@@ -3,20 +3,26 @@ use std::sync::{Arc, Mutex};
 use crate::{
     client::state::ClientState,
     game::state::GameState,
-    memory::addresses::{ClientMode, GameMode, LocalPlayer},
+    memory::addresses::{ClientMode, GameMode},
     validation::result::{MatchResult, StateError},
 };
 
 pub struct Validator {
     client_state: Arc<Mutex<ClientState>>,
     matchstate: MatchState,
+    session: Option<String>,
 }
 
 impl Validator {
     pub fn new(client_state: Arc<Mutex<ClientState>>) -> Self {
+        let session = match client_state.lock().unwrap().session() {
+            Some(s) => Some(s.to_string()),
+            None => None,
+        };
         Validator {
             client_state,
             matchstate: MatchState::default(),
+            session,
         }
     }
 
@@ -36,7 +42,7 @@ impl Validator {
                         client_mode
                     )));
                 }
-                
+
                 self.update_matchstate(&game_mode);
                 match &self.matchstate {
                     MatchState::MatchFinished => {
@@ -52,18 +58,30 @@ impl Validator {
                             ))?,
                         };
 
-                        let result = MatchResult::new(session_id, client_mode, local_player as u8, players, timers)?;
+                        let result = MatchResult::new(
+                            session_id,
+                            client_mode,
+                            local_player as u8,
+                            players,
+                            timers,
+                        )?;
                         return Ok(Validity::MatchFinished(result));
                     }
                     MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),
-                    _ => Ok(Validity::Valid),
+                    _ => {
+                        let session = match &self.session {
+                            Some(s) => s.clone(),
+                            None => Err(StateError::SessionNotFound)?,
+                        };
+                        Ok(Validity::Valid(session))
+                    }
                 }
             }
             // during char select or transition states
             GameState::NotInGame {
                 game_mode,
                 client_mode,
-                host_position
+                host_position: _,
             } => {
                 if !matches!(client_mode, ClientMode::Host | ClientMode::Client) {
                     return Ok(Validity::Invalid(format!(
@@ -75,7 +93,13 @@ impl Validator {
                 self.update_matchstate(&game_mode);
                 match &self.matchstate {
                     MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),
-                    _ => Ok(Validity::Valid),
+                    _ => {
+                        let session = match &self.session {
+                            Some(s) => s.clone(),
+                            None => Err(StateError::SessionNotFound)?,
+                        };
+                        Ok(Validity::Valid(session))
+                    },
                 }
             }
         }
@@ -105,7 +129,7 @@ impl Validator {
 
 #[derive(Debug)]
 pub enum Validity {
-    Valid,
+    Valid(String),
     Invalid(String),
     MatchFinished(MatchResult),
 }
