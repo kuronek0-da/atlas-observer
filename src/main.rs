@@ -36,10 +36,11 @@ fn main() {
             &log_tx,
         );
 
-        let config = load_config();
+        let mut config = load_config();
         let client = create_client(config, &log_tx);
+        let client_state_clone = client.clone_state();
 
-        let mut app = AppUI::new(log_rx, cmd_tx);
+        let mut app = AppUI::new(log_rx, cmd_tx, client_state_clone);
 
         std::thread::spawn(move || runner(client, log_tx, cmd_rx));
         if let Err(e) = ratatui::run(|terminal| app.run(terminal)) {
@@ -107,17 +108,24 @@ fn runner(client: ClientManager, log_tx: Sender<String>, cmd_rx: Receiver<AppCom
         loop {
             match cmd_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(AppCommand::Stop(state)) => {
+                    log("Sending cancel request...".to_string(), &log_tx);
+                    match client.send_cancel_queue() {
+                        Ok(msg) => log(msg, &log_tx),
+                        Err(e) => log(format!("Client Error: {}", e), &log_tx),
+                    }
                     is_cancelled.store(true, Ordering::Relaxed);
                     if let Err(e) = client.update_state(state) {
                         log(format!("Client Error: {}", e), &log_tx);
                     }
-                    log("Queue canceled.".to_string(), &log_tx);
                     break;
                 }
                 _ => {}
             }
             if queue_thread.is_finished() {
                 if is_cancelled.load(Ordering::Relaxed) {
+                    if let Err(e) = client.update_state(ClientState::Idle) {
+                        log(format!("Client Error: {}", e), &log_tx);
+                    }
                     break;
                 }
                 break 'outer;
@@ -148,6 +156,7 @@ fn runner(client: ClientManager, log_tx: Sender<String>, cmd_rx: Receiver<AppCom
 }
 
 fn create_client(config: Config, log_tx: &Sender<String>) -> ClientManager {
+    let mut config_clone = config.clone();
     let client = ClientManager::new(config).unwrap_or_else(|e| {
         eprintln!("{}", e);
         exit_app(1)
@@ -156,6 +165,15 @@ fn create_client(config: Config, log_tx: &Sender<String>) -> ClientManager {
     log("Cheking the server...".to_string(), log_tx);
     match client.validate_token() {
         Ok(vr) => log(format!("Logged as {}", vr.discord_username), log_tx),
+        Err(ClientError::AuthorizationError) => {
+            let token = cli::prompt_token();
+            config_clone.token = token;
+            if let Err(e) = config_clone.save() {
+                update_status(format!("Config Error: {}", e));
+            }
+            update_status("Token updated. Restart Atlas.".to_string());
+            exit_app(1)
+        }
         Err(e) => {
             eprintln!("Client Error: {}", e);
             exit_app(1)

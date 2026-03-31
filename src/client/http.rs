@@ -162,6 +162,20 @@ impl ClientManager {
         }
     }
 
+    pub fn send_cancel_queue(&self) -> Result<String, ClientError> {
+        let res = self.client.delete(format!("{}/api/queue", self.server_url))
+            .headers(self.construct_headers())
+            .send()
+            .map_err(|_| ClientError::RequestError)?;
+        if res.status().is_success() {
+            if let Ok(msg) = res.text() {
+                return Ok(msg);
+            }
+            return Ok(String::from("Queue successfully canceled"))
+        }
+        Err(ClientError::ServerError(res.status().as_u16()))
+    }
+
     pub fn update_state(&self, state: ClientState) -> Result<(), ClientError> {
         let mut data = self.state.lock().map_err(|_| ClientError::StateError)?;
         *data = state;

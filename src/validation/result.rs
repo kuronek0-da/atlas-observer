@@ -106,15 +106,6 @@ impl MatchResult {
         let remaining_secs = secs % 60.0;
         format!("{}:{:02}", mins as u32, remaining_secs as u32)
     }
-
-    pub fn winner(&self) -> u8 {
-        let p1 = &self.p1.score;
-        let p2 = &self.p2.score;
-        if p1 > p2 {
-            return 1;
-        }
-        2
-    }
 }
 
 fn get_unix_timestamp_u64() -> u64 {

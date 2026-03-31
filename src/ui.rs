@@ -1,5 +1,5 @@
 use std::{
-    sync::mpsc::{Receiver, Sender},
+    sync::{Arc, Mutex, MutexGuard, mpsc::{Receiver, Sender}},
     time::Duration,
 };
 
@@ -13,7 +13,7 @@ use ratatui::{
 };
 use thiserror::Error;
 
-use crate::client::ClientState;
+use crate::client::{ClientState, http::ClientError};
 
 #[derive(Error, Debug)]
 pub enum UIError {
@@ -33,7 +33,7 @@ pub enum AppCommand {
 pub struct AppUI {
     input: String,
     pub exit: bool,
-    client_state: ClientState,
+    client_state: Arc<Mutex<ClientState>>,
     logs: Vec<String>,
     list_state: ListState,
     log_rx: Receiver<String>,
@@ -41,11 +41,11 @@ pub struct AppUI {
 }
 
 impl AppUI {
-    pub fn new(log_rx: Receiver<String>, cmd_tx: Sender<AppCommand>) -> Self {
+    pub fn new(log_rx: Receiver<String>, cmd_tx: Sender<AppCommand>, client_state: Arc<Mutex<ClientState>>) -> Self {
         AppUI {
             input: String::new(),
             exit: false,
-            client_state: ClientState::Idle,
+            client_state,
             logs: Vec::new(),
             list_state: {
                 let mut s = ListState::default();
@@ -97,7 +97,8 @@ impl AppUI {
         frame.render_stateful_widget(logs, layout[1], &mut self.list_state);
 
         // Input
-        let commands = match &self.client_state {
+        let client_state = self.client_state().unwrap();
+        let commands = match *client_state {
             ClientState::Idle => "Commands: host <opt code> | join <code> | exit",
             _ => "Commands: stop | exit",
         };
@@ -111,6 +112,10 @@ impl AppUI {
         let cursor_x = layout[2].x + 3 + self.input.len() as u16;
         let cursor_y = layout[2].y + 2;
         frame.set_cursor_position((cursor_x, cursor_y));
+    }
+
+    fn client_state(&self) -> Result<MutexGuard<'_, ClientState>, ClientError> {
+        self.client_state.lock().map_err(|_| ClientError::StateError)
     }
 
     pub fn handle_input(&mut self) -> Result<(), UIError> {
@@ -152,7 +157,7 @@ impl AppUI {
     }
 
     fn handle_cmd(&mut self, cmd: String) {
-        let is_idle = self.client_state == ClientState::Idle;
+        let is_idle = *self.client_state().unwrap() == ClientState::Idle;
         match cmd.as_str() {
             "host" if is_idle => {
                 self.send_app_cmd(AppCommand::Host(ClientState::hosting()))
@@ -169,8 +174,13 @@ impl AppUI {
         }
     }
 
+    fn update_state(&mut self, client_state: ClientState) {
+        let mut data = self.client_state.lock().unwrap();
+        *data = client_state;
+    }
+
     fn send_app_cmd(&mut self, app_cmd: AppCommand) {
-        self.client_state = match &app_cmd {
+        let client_state = match &app_cmd {
             AppCommand::Host(state) => state.clone(),
             AppCommand::Join(state) => state.clone(),
             AppCommand::Stop(state) => state.clone(),
@@ -180,6 +190,7 @@ impl AppUI {
                 ClientState::Idle
             },
         };
+        self.update_state(client_state);
 
         match self.cmd_tx.send(app_cmd) {
             Ok(_) => {}
