@@ -46,7 +46,6 @@ pub struct ClientManager {
     client: Client,
 }
 
-
 impl ClientManager {
     // 5 minutes
     const REQUEST_TIMEOUT_SECS: Duration = Duration::from_secs(300);
@@ -55,12 +54,11 @@ impl ClientManager {
             token: config.token,
             server_url: config.server_url,
             state: Arc::new(Mutex::new(ClientState::Idle)),
-            client: Client::builder()
-                .build()
-                .unwrap(),
+            client: Client::builder().build().expect("Could not build client."),
         })
     }
 
+    #[allow(dead_code)]
     pub fn new_test(config: Config) -> Result<Self, ConfigError> {
         Ok(ClientManager {
             token: config.token,
@@ -94,9 +92,7 @@ impl ClientManager {
             .headers(self.construct_headers())
             .json(body)
             .send()
-            .map_err(|_| {
-                ClientError::RequestError
-            })
+            .map_err(|_| ClientError::RequestError)
     }
 
     pub fn validate_token(&self) -> Result<ValidationResponse, ClientError> {
@@ -113,14 +109,15 @@ impl ClientManager {
     }
 
     pub fn send_result(&self, result: &MatchResult) -> Result<Response, ClientError> {
-        let state = self.state
+        let state = self
+            .state
             .lock()
             .map_err(|_| ClientError::StateError)?
             .to_owned();
 
         let res = match state {
             ClientState::PlayingRanked(_) => self.send_post("api/match".to_string(), &result)?,
-            _ => Err(ClientError::InvalidStateError(state))?
+            _ => Err(ClientError::InvalidStateError(state))?,
         };
 
         if res.status().is_success() {
@@ -163,7 +160,9 @@ impl ClientManager {
     }
 
     pub fn send_cancel_queue(&self) -> Result<String, ClientError> {
-        let res = self.client.delete(format!("{}/api/queue", self.server_url))
+        let res = self
+            .client
+            .delete(format!("{}/api/queue", self.server_url))
             .headers(self.construct_headers())
             .send()
             .map_err(|_| ClientError::RequestError)?;
@@ -171,7 +170,7 @@ impl ClientManager {
             if let Ok(msg) = res.text() {
                 return Ok(msg);
             }
-            return Ok(String::from("Queue successfully canceled"))
+            return Ok(String::from("Queue successfully canceled"));
         }
         Err(ClientError::ServerError(res.status().as_u16()))
     }
@@ -187,10 +186,13 @@ impl ClientManager {
 mod tests {
     use std::{thread::sleep, time::Duration};
 
-    use crate::{game::{
-        game_char::{GameChar, Moon},
-        state::{GameTimers, Player},
-    }, memory::addresses::ClientMode};
+    use crate::{
+        game::{
+            game_char::{GameChar, Moon},
+            state::{GameTimers, Player},
+        },
+        memory::addresses::ClientMode,
+    };
 
     use super::*;
 
@@ -212,14 +214,8 @@ mod tests {
             score: 1,
         };
         let players = [p1, p2];
-        MatchResult::new(
-            session_id,
-            client_mode,
-            local_player,
-            players,
-            timers
-        )
-        .expect("Could not mock MatchResult")
+        MatchResult::new(session_id, client_mode, local_player, players, timers)
+            .expect("Could not mock MatchResult")
     }
 
     #[test]

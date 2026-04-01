@@ -25,6 +25,7 @@ Only those i might find relevant
 */
 
 /* === READ FROM MBAA === */
+#![allow(dead_code)]
 
 pub const WORLD_TIMER_ADDR: usize = 0x55D1D4;
 pub const ROUND_TIMER_ADDR: usize = 0x562A3C;

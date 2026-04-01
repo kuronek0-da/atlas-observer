@@ -3,6 +3,8 @@ use std::io::ErrorKind;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::{cli, exit_app};
+
 #[derive(Debug, Error, Clone)]
 pub enum ConfigError {
     #[error("could not find config file")]
@@ -30,10 +32,40 @@ pub struct ConfigFile {
 }
 
 impl Config {
-    pub fn load() -> Result<Self, ConfigError> {
-        Self::from_file("config.toml")
+    pub fn load() -> Self {
+        let mut config = Config::from_file("config.toml").unwrap_or_else(|e| match e {
+            ConfigError::FileNotFound => {
+                eprintln!("Config Error: {}", e);
+                eprintln!("Trying to creating a new config file...");
+                match Config::new().save() {
+                    Ok(_) => eprintln!("File created successfully, restart Atlas."),
+                    Err(e) => {
+                        eprintln!("Config Error: {}", e);
+                        eprintln!("Try running this app as admin.");
+                    }
+                }
+                exit_app(1)
+            }
+            _ => {
+                eprintln!("Config Error: {}", e);
+                exit_app(1)
+            }
+        });
+
+        if config.token.is_empty() {
+            config.token = cli::prompt_token();
+            if let Err(e) = config.save() {
+                eprintln!("Config Error: {}", e);
+                exit_app(1)
+            }
+            eprintln!("Token updated, please restart this application.");
+            exit_app(1)
+        }
+
+        config
     }
 
+    #[allow(dead_code)]
     pub fn load_test() -> Result<Self, ConfigError> {
         Self::from_file("test_config.toml")
     }
@@ -66,7 +98,7 @@ impl Config {
             toml::from_str(&content).map_err(|e| ConfigError::ParseError(e.to_string()))?;
         Ok(Config {
             server_url: SERVER_URL.unwrap_or("http://localhost:8080").to_string(),
-            token: conf.token
+            token: conf.token,
         })
     }
 }

@@ -1,5 +1,8 @@
 use std::{
-    sync::{Arc, Mutex, MutexGuard, mpsc::{Receiver, Sender}},
+    sync::{
+        Arc, Mutex, MutexGuard,
+        mpsc::{Receiver, Sender},
+    },
     time::Duration,
 };
 
@@ -21,6 +24,8 @@ pub enum UIError {
     TerminalError(String),
     #[error("Error while handling an event: {0}")]
     EventError(String),
+    #[error(transparent)]
+    StateError(#[from] ClientError),
 }
 
 pub enum AppCommand {
@@ -41,7 +46,11 @@ pub struct AppUI {
 }
 
 impl AppUI {
-    pub fn new(log_rx: Receiver<String>, cmd_tx: Sender<AppCommand>, client_state: Arc<Mutex<ClientState>>) -> Self {
+    pub fn new(
+        log_rx: Receiver<String>,
+        cmd_tx: Sender<AppCommand>,
+        client_state: Arc<Mutex<ClientState>>,
+    ) -> Self {
         AppUI {
             input: String::new(),
             exit: false,
@@ -60,7 +69,9 @@ impl AppUI {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<(), UIError> {
         while !self.exit {
             terminal
-                .draw(|frame| self.render_ui(frame))
+                .draw(|frame| if let Err(e) = self.render_ui(frame) {
+                    self.push_log(format!("UI Error: {}", e));
+                })
                 .map_err(|e| UIError::TerminalError(e.to_string()))?;
             self.handle_input()?;
             if let Ok(log) = self.log_rx.try_recv() {
@@ -70,7 +81,7 @@ impl AppUI {
         Ok(())
     }
 
-    fn render_ui(&mut self, frame: &mut Frame) {
+    fn render_ui(&mut self, frame: &mut Frame) -> Result<(), UIError> {
         let layout = Layout::vertical([
             Constraint::Length(4),
             Constraint::Fill(1),
@@ -97,9 +108,11 @@ impl AppUI {
         frame.render_stateful_widget(logs, layout[1], &mut self.list_state);
 
         // Input
-        let client_state = self.client_state().unwrap();
+        let client_state = self.client_state()?;
+
         let commands = match *client_state {
             ClientState::Idle => "Commands: host <opt code> | join <code> | exit",
+            ClientState::PlayingRanked(_) => "Commands: exit (please, close MBAA first)",
             _ => "Commands: stop | exit",
         };
         let cmd_input = Paragraph::new(Text::from(vec![
@@ -112,10 +125,14 @@ impl AppUI {
         let cursor_x = layout[2].x + 3 + self.input.len() as u16;
         let cursor_y = layout[2].y + 2;
         frame.set_cursor_position((cursor_x, cursor_y));
+
+        Ok(())
     }
 
-    fn client_state(&self) -> Result<MutexGuard<'_, ClientState>, ClientError> {
-        self.client_state.lock().map_err(|_| ClientError::StateError)
+    fn client_state(&self) -> Result<MutexGuard<'_, ClientState>, UIError> {
+        self.client_state
+            .lock()
+            .map_err(|_| ClientError::StateError.into())
     }
 
     pub fn handle_input(&mut self) -> Result<(), UIError> {
@@ -133,7 +150,7 @@ impl AppUI {
                     KeyCode::Enter => {
                         let cmd = self.input.trim().to_string();
                         if !cmd.is_empty() {
-                            self.handle_cmd(cmd);
+                            self.handle_cmd(cmd)?;
                         }
                         self.input.clear();
                     }
@@ -156,27 +173,31 @@ impl AppUI {
         Ok(())
     }
 
-    fn handle_cmd(&mut self, cmd: String) {
-        let is_idle = *self.client_state().unwrap() == ClientState::Idle;
+    fn handle_cmd(&mut self, cmd: String) -> Result<(), UIError> {
+        let is_idle = *self.client_state()? == ClientState::Idle;
+        let is_playing = matches!(*self.client_state()?, ClientState::PlayingRanked(_));
         match cmd.as_str() {
-            "host" if is_idle => {
-                self.send_app_cmd(AppCommand::Host(ClientState::hosting()))
+            "host" if is_idle => self.send_app_cmd(AppCommand::Host(ClientState::hosting())),
+            "stop" if !is_idle && !is_playing => {
+                self.send_app_cmd(AppCommand::Stop(ClientState::Idle))
             }
-            "stop" if !is_idle => self.send_app_cmd(AppCommand::Stop(ClientState::Idle)),
             "exit" => self.send_app_cmd(AppCommand::Exit),
-            cmd if cmd.starts_with("host ") && is_idle => self.send_app_cmd(
-                AppCommand::Host(ClientState::HostingRanked(cmd[5..].to_string())),
-            ),
-            cmd if cmd.starts_with("join ") && is_idle => self.send_app_cmd(
-                AppCommand::Join(ClientState::JoinedRanked(cmd[5..].to_string())),
-            ),
+            cmd if cmd.starts_with("host ") && is_idle => self.send_app_cmd(AppCommand::Host(
+                ClientState::HostingRanked(cmd[5..].to_string()),
+            )),
+            cmd if cmd.starts_with("join ") && is_idle => self.send_app_cmd(AppCommand::Join(
+                ClientState::JoinedRanked(cmd[5..].to_string()),
+            )),
             cmd => self.push_log(format!("Invalid command '{}'", cmd)),
         }
+        Ok(())
     }
 
-    fn update_state(&mut self, client_state: ClientState) {
-        let mut data = self.client_state.lock().unwrap();
+    fn update_state(&mut self, client_state: ClientState) -> Result<(), UIError> {
+        let mut data = self.client_state.lock()
+            .map_err(|_| UIError::from(ClientError::StateError))?;
         *data = client_state;
+        Ok(())
     }
 
     fn send_app_cmd(&mut self, app_cmd: AppCommand) {
@@ -188,12 +209,15 @@ impl AppUI {
                 self.exit = true;
                 // app will exit
                 ClientState::Idle
-            },
+            }
         };
-        self.update_state(client_state);
 
         match self.cmd_tx.send(app_cmd) {
-            Ok(_) => {}
+            Ok(_) => {
+                if let Err(e) = self.update_state(client_state) {
+                    self.push_log(format!("Could not update client state: {}", e));
+                }
+            }
             Err(e) => self.push_log(format!("Command not received: {}", e)),
         }
     }
