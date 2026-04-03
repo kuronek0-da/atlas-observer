@@ -1,5 +1,6 @@
 use std::io::ErrorKind;
 
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -9,7 +10,7 @@ use crate::{cli, exit_app};
 pub enum ConfigError {
     #[error("could not find config file")]
     FileNotFound,
-    #[error("could not parse config file: {0}")]
+    #[error("could not parse configution: {0}")]
     ParseError(String),
     #[error("could not write config file: {0}")]
     WriteError(String),
@@ -35,29 +36,39 @@ impl Config {
     pub fn load() -> Self {
         let mut config = Config::from_file("config.toml").unwrap_or_else(|e| match e {
             ConfigError::FileNotFound => {
-                eprintln!("Config Error: {}", e);
+                error!("Config Error: {}", e);
+                eprintln!("Configuration not found.");
                 eprintln!("Trying to creating a new config file...");
                 match Config::new().save() {
                     Ok(_) => eprintln!("File created successfully, restart Atlas."),
                     Err(e) => {
-                        eprintln!("Config Error: {}", e);
-                        eprintln!("Try running this app as admin.");
+                        error!("Config Error: {}", e);
+                        eprintln!("Action failed, try giving this app writing permission.");
                     }
                 }
                 exit_app(1)
             }
+            ConfigError::ParseError(ref field) => {
+                error!("Config Error: {}", e);
+                eprintln!("'{}' field in config.toml has incorrect formatting or is invalid.", field);
+                exit_app(1)
+            }
             _ => {
-                eprintln!("Config Error: {}", e);
+                error!("Config Error: {}", e);
+                eprintln!("Failed to load config, try giving this app reading/writting permission");
                 exit_app(1)
             }
         });
 
         if config.token.is_empty() {
+            error!("Empty token detected, prompting for new token");
             config.token = cli::prompt_token();
             if let Err(e) = config.save() {
-                eprintln!("Config Error: {}", e);
+                error!("Config Error: {}", e);
+                eprintln!("Failed to save updated config.");
                 exit_app(1)
             }
+            info!("Token updated");
             eprintln!("Token updated, please restart this application.");
             exit_app(1)
         }

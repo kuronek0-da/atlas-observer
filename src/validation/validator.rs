@@ -26,6 +26,13 @@ impl Validator {
         }
     }
 
+    fn validate_client_mode(&self, client_mode: &ClientMode) -> Result<(), String> {
+        if !matches!(client_mode, ClientMode::Host | ClientMode::Client) {
+            return Err(format!("invalid client mode: {:?}", client_mode));
+        }
+        Ok(())
+    }
+
     pub fn validate(&mut self, state: GameState) -> Result<Validity, StateError> {
         match state {
             // During in-game and retry menu
@@ -36,11 +43,8 @@ impl Validator {
                 timers,
                 players,
             } => {
-                if !matches!(client_mode, ClientMode::Host | ClientMode::Client) {
-                    return Ok(Validity::Invalid(format!(
-                        "invalid client mode: {:?}",
-                        client_mode
-                    )));
+                if let Err(msg) = self.validate_client_mode(&client_mode) {
+                    return Ok(Validity::Invalid(msg));
                 }
 
                 self.update_matchstate(&game_mode);
@@ -83,11 +87,8 @@ impl Validator {
                 client_mode,
                 host_position: _,
             } => {
-                if !matches!(client_mode, ClientMode::Host | ClientMode::Client) {
-                    return Ok(Validity::Invalid(format!(
-                        "invalid client mode: {:?}",
-                        client_mode
-                    )));
+                if let Err(msg) = self.validate_client_mode(&client_mode) {
+                    return Ok(Validity::Invalid(msg));
                 }
 
                 self.update_matchstate(&game_mode);
@@ -99,7 +100,7 @@ impl Validator {
                             None => Err(StateError::SessionNotFound)?,
                         };
                         Ok(Validity::Valid(session))
-                    },
+                    }
                 }
             }
         }

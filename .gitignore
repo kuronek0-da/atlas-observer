@@ -4,4 +4,5 @@
 ranked.log
 .cargo
 *.exe
+*.log
 config.toml

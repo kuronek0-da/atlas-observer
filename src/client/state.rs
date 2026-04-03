@@ -12,6 +12,7 @@ pub enum ClientState {
     JoinedRanked(String),
     /// Currently playing ranked
     PlayingRanked(String),
+    Exit,
 }
 
 impl ClientState {
@@ -23,6 +24,7 @@ impl ClientState {
         match self {
             ClientState::HostingRanked(s) => Some(&s),
             ClientState::JoinedRanked(s) => Some(&s),
+            ClientState::PlayingRanked(s) => Some(&s),
             _ => None,
         }
     }

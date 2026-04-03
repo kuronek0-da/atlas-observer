@@ -1,4 +1,6 @@
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+use std::ffi::OsStr;
+
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use windows::{
     Win32::Foundation::{CloseHandle, HANDLE},
     Win32::System::Threading::{PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
@@ -16,6 +18,8 @@ use thiserror::Error;
 pub enum MemoryError {
     #[error("Process '{0}' was not found.")]
     ProcessNotFound(String),
+    #[error("Multiple '{0}' processes detected")]
+    MultipleProcessesError(String),
     #[error("could not open MBAA")]
     OpenProcessFailed,
     #[error("error trying to read memory: {0}")]
@@ -50,26 +54,18 @@ impl MemoryManager {
     /// Attaches to MBAA.exe
     pub fn attach(&mut self) -> Result<(), MemoryError> {
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
-        let mb_pid = self
-            .sys
-            .processes_by_exact_name(Self::MBAA.as_ref())
-            .next()
-            .ok_or(MemoryError::ProcessNotFound(Self::MBAA.to_string()))?;
-        let caster_pid = self
-            .sys
-            .processes_by_exact_name(Self::CASTER.as_ref())
-            .next()
-            .ok_or(MemoryError::ProcessNotFound(Self::CASTER.to_string()))?;
+        let mb_pid = self.find_single_pid(Self::MBAA)?;
+        let caster_pid = self.find_single_pid(Self::CASTER)?;
 
         self.mb_process = Some(open_process(
             PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
             false,
-            mb_pid.pid().as_u32(),
+            mb_pid.as_u32(),
         )?);
         self.caster_process = Some(open_process(
             PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
             false,
-            caster_pid.pid().as_u32(),
+            caster_pid.as_u32(),
         )?);
         if let Some(process) = self.caster_process {
             self.caster_base = Some(get_module_base(process, Self::CASTER)?);
@@ -78,6 +74,16 @@ impl MemoryManager {
         };
 
         Ok(())
+    }
+
+    fn find_single_pid(&self, name: &str) -> Result<Pid, MemoryError> {
+        let mut iter = self.sys
+            .processes_by_exact_name(name.as_ref());
+        let p = iter.next().ok_or(MemoryError::ProcessNotFound(name.to_string()))?;
+        if iter.next().is_some() {
+            return Err(MemoryError::MultipleProcessesError(name.to_string()));
+        }
+        Ok(p.pid())
     }
 
     /// Close process handle

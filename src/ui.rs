@@ -28,11 +28,12 @@ pub enum UIError {
     StateError(#[from] ClientError),
 }
 
+#[derive(Debug, Clone)]
 pub enum AppCommand {
     Host(ClientState),
     Join(ClientState),
     Stop(ClientState),
-    Exit,
+    Exit(ClientState),
 }
 
 pub struct AppUI {
@@ -69,13 +70,19 @@ impl AppUI {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<(), UIError> {
         while !self.exit {
             terminal
-                .draw(|frame| if let Err(e) = self.render_ui(frame) {
-                    self.push_log(format!("UI Error: {}", e));
+                .draw(|frame| {
+                    if let Err(e) = self.render_ui(frame) {
+                        self.push_log(format!("UI Error: {}", e));
+                    }
                 })
                 .map_err(|e| UIError::TerminalError(e.to_string()))?;
             self.handle_input()?;
             if let Ok(log) = self.log_rx.try_recv() {
                 self.push_log(log);
+            }
+
+            if *self.client_state()? == ClientState::Exit {
+                self.exit = true;
             }
         }
         Ok(())
@@ -144,8 +151,13 @@ impl AppUI {
                     return Ok(());
                 }
                 match key.code {
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        self.exit = true;
+                    KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.send_app_cmd(AppCommand::Exit(ClientState::Exit));
+                    }
+                    KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        let content = cli_clipboard::get_contents()
+                            .map_err(|_| UIError::EventError("paste".to_string()))?;
+                        self.input.push_str(content.as_str());
                     }
                     KeyCode::Enter => {
                         let cmd = self.input.trim().to_string();
@@ -181,7 +193,7 @@ impl AppUI {
             "stop" if !is_idle && !is_playing => {
                 self.send_app_cmd(AppCommand::Stop(ClientState::Idle))
             }
-            "exit" => self.send_app_cmd(AppCommand::Exit),
+            "exit" => self.send_app_cmd(AppCommand::Exit(ClientState::Exit)),
             cmd if cmd.starts_with("host ") && is_idle => self.send_app_cmd(AppCommand::Host(
                 ClientState::HostingRanked(cmd[5..].to_string()),
             )),
@@ -193,32 +205,37 @@ impl AppUI {
         Ok(())
     }
 
-    fn update_state(&mut self, client_state: ClientState) -> Result<(), UIError> {
-        let mut data = self.client_state.lock()
-            .map_err(|_| UIError::from(ClientError::StateError))?;
-        *data = client_state;
-        Ok(())
-    }
-
     fn send_app_cmd(&mut self, app_cmd: AppCommand) {
         let client_state = match &app_cmd {
             AppCommand::Host(state) => state.clone(),
             AppCommand::Join(state) => state.clone(),
             AppCommand::Stop(state) => state.clone(),
-            _ => {
-                self.exit = true;
-                // app will exit
-                ClientState::Idle
-            }
+            AppCommand::Exit(state) => state.clone(),
         };
 
-        match self.cmd_tx.send(app_cmd) {
-            Ok(_) => {
-                if let Err(e) = self.update_state(client_state) {
-                    self.push_log(format!("Could not update client state: {}", e));
+        match &client_state {
+            ClientState::HostingRanked(code) => {
+                if let Err(e) = validate_code_len(code) {
+                    self.push_log(e.to_string());
+                    return;
+                }
+                if cli_clipboard::set_contents(code.clone()).is_err() {
+                    self.push_log("Could not copy code to clipboard.".to_string());
+                } else {
+                    self.push_log(format!("'{}' copied to clipboard", code));
                 }
             }
-            Err(e) => self.push_log(format!("Command not received: {}", e)),
+            ClientState::JoinedRanked(code) => {
+                if let Err(e) = validate_code_len(code) {
+                    self.push_log(e.to_string());
+                    return;
+                }
+            }
+            _ => {}
+        }
+
+        if let Err(e) = self.cmd_tx.send(app_cmd) {
+            self.push_log(format!("Command not received: {}", e));
         }
     }
 
@@ -226,4 +243,14 @@ impl AppUI {
         self.logs.push(log);
         self.list_state.select_last();
     }
+}
+
+fn validate_code_len(code: &str) -> Result<(), &'static str> {
+    if code.len() < 3 {
+        return Err("Invalid code: minimum size is 3 characters");
+    }
+    if code.len() > 6 {
+        return Err("Invalid code: maximum size is 6 characters");
+    }
+    Ok(())
 }

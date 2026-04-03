@@ -1,6 +1,16 @@
-use std::sync::mpsc::{Sender, channel};
+use std::{
+    fs::{OpenOptions},
+    sync::mpsc::{Sender, channel},
+};
 
-use crate::{cli::update_status, config::Config, ui::{AppCommand, AppUI}};
+use log::{LevelFilter, error, info};
+use simplelog::WriteLogger;
+
+use crate::{
+    cli::update_status,
+    config::Config,
+    ui::{AppCommand, AppUI},
+};
 
 mod cli;
 mod client;
@@ -8,17 +18,21 @@ mod config;
 mod game;
 mod memory;
 mod runner;
+mod setup;
 mod ui;
 mod validation;
-mod setup;
 
 fn main() {
+    logger_init();
+    let now = chrono::Local::now();
+    info!("=== Atlas Observer v{} started at {} ===", env!("CARGO_PKG_VERSION"), now);
+
     loop {
         let (log_tx, log_rx) = channel::<String>();
         let (cmd_tx, cmd_rx) = channel::<AppCommand>();
 
         log(
-            "Ranked mode is only supported on cccaster v3.1.008.".to_string(),
+            "[Warning] Ranked mode is only supported on cccaster v3.1.008.".to_string(),
             &log_tx,
         );
 
@@ -30,13 +44,27 @@ fn main() {
 
         std::thread::spawn(move || runner::run(client, log_tx, cmd_rx));
         if let Err(e) = ratatui::run(|terminal| app.run(terminal)) {
-            update_status(format!("UI Error: {}", e));
+            error!("UI Error: {}", e);
+            eprintln!("UI Error: {}", e);
         }
 
         if app.exit {
+            info!("Atlas closed.\n");
             break;
         }
     }
+}
+
+fn logger_init() {
+    let _ = WriteLogger::init(
+        LevelFilter::Info,
+        simplelog::Config::default(),
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("atlas-observer.log")
+            .unwrap()
+    );
 }
 
 pub fn exit_app(code: i32) -> ! {
