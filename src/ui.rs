@@ -1,9 +1,8 @@
 use std::{
-    sync::{
+    env, sync::{
         Arc, Mutex, MutexGuard,
         mpsc::{Receiver, Sender},
-    },
-    time::Duration,
+    }, time::Duration
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -97,9 +96,10 @@ impl AppUI {
         .split(frame.area());
 
         // Title
+        let version = env!("CARGO_PKG_VERSION");
         let title = Paragraph::new(Text::from(vec![
             Line::from("Atlas Observer".bold()),
-            Line::from("v0.1.0-alpha".dim()),
+            Line::from(version.dim()),
         ]))
         .alignment(Alignment::Center)
         .block(Block::new().borders(Borders::ALL));

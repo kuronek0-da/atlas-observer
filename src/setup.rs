@@ -36,7 +36,7 @@ pub fn create_client(config: Config, log_tx: &Sender<String>) -> ClientManager {
         }
         Err(e) => {
             error!("Failed to validate token: {}", e);
-            eprintln!("Failed to validate token.");
+            eprintln!("No response from the server.");
             exit_app(1)
         }
     }

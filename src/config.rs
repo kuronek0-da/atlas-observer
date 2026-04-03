@@ -18,7 +18,10 @@ pub enum ConfigError {
     ReadError(String),
 }
 
-const SERVER_URL: Option<&str> = option_env!("SERVER_URL");
+const SERVER_URL: &str = match option_env!("SERVER_URL") {
+    Some(s) => s,
+    None => "https://atlas-index-server-production.up.railway.app",
+};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
@@ -83,7 +86,7 @@ impl Config {
 
     pub fn new() -> Self {
         Config {
-            server_url: SERVER_URL.unwrap_or("http://localhost:8080").to_string(),
+            server_url: SERVER_URL.to_string(),
             token: String::new(),
         }
     }
@@ -108,7 +111,7 @@ impl Config {
         let conf: ConfigFile =
             toml::from_str(&content).map_err(|e| ConfigError::ParseError(e.to_string()))?;
         Ok(Config {
-            server_url: SERVER_URL.unwrap_or("http://localhost:8080").to_string(),
+            server_url: SERVER_URL.to_string(),
             token: conf.token,
         })
     }
