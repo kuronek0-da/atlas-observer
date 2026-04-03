@@ -1,8 +1,16 @@
 use std::sync::mpsc::{Receiver, Sender};
 
-use crate::{client::{ClientManager, ClientState}, game::state::GameState, log, validation::{Validator, Validity}};
+use log::{error, info};
+
+use crate::{
+    client::{ClientManager, ClientState, http::ClientError},
+    game::state::GameState,
+    log,
+    validation::{Validator, Validity, result::MatchResult},
+};
 
 pub fn run(game_state_rx: Receiver<GameState>, client: ClientManager, log_tx: &Sender<String>) {
+    info!("Started validator thread");
     let mut validator = Validator::new(client.clone_state());
     let mut is_playing = false;
 
@@ -10,43 +18,79 @@ pub fn run(game_state_rx: Receiver<GameState>, client: ClientManager, log_tx: &S
         match validator.validate(state) {
             Ok(validity) => match validity {
                 Validity::Invalid(reason) => {
+                    error!("Invalid game state: {}", reason);
                     log(format!("Invalid game state: {}", reason), log_tx);
                     break;
                 }
                 Validity::MatchFinished(result) => {
+                    info!("Match result: {:?}", result);
                     log(format!("Match ended: {}", &result), log_tx);
+
+                    info!("Sending match to the server");
                     log("Sending match to the server...".to_string(), log_tx);
-                    let client = client.clone();
+
+                    let client_clone = client.clone();
                     let log_tx_client = log_tx.clone();
-                    std::thread::spawn(move || match client.send_result(&result) {
-                        Ok(res) => match res.text() {
-                            Ok(msg) => log(msg, &log_tx_client),
-                            Err(_) => log(
-                                "Match sent, but couldn't read response message".to_string(),
-                                &log_tx_client,
-                            ),
-                        },
-                        Err(e) => {
-                            log(
-                                format!("Could not send match to the server: {}", e),
-                                &log_tx_client,
-                            );
-                        }
+
+                    std::thread::spawn(move || {
+                        send_match_result(&result, client_clone, &log_tx_client)
                     });
                 }
                 Validity::Valid(session) => {
                     if !is_playing {
                         is_playing = true;
-                        if let Err(e) = client.update_state(ClientState::PlayingRanked(session)) {
-                            log(format!("Client Errr: {}", e), log_tx);
+                        let state = ClientState::PlayingRanked(session);
+                        info!("Changing state to {:?}", state);
+                        if let Err(e) = client.update_state(state) {
+                            error!("Client Error: {}", e);
+                            log(
+                                "Something went wrong when trying to enter 'Playing' state."
+                                    .to_string(),
+                                log_tx,
+                            );
                         }
                     }
                 }
             },
             Err(e) => {
-                log(format!("Validator error: {:?}", e), log_tx);
+                error!("Validator Error: {}", e);
+                log("Failed to validate game state".to_string(), log_tx);
                 break;
             }
         }
+    }
+}
+
+fn send_match_result(result: &MatchResult, client: ClientManager, log_tx: &Sender<String>) {
+    match client.send_result(result) {
+        Ok(res) => match res.text() {
+            Ok(msg) => {
+                info!("Match successfully sent, response: {}", msg);
+                log(format!("[Match registered] {}", msg), log_tx);
+            }
+            Err(_) => {
+                info!("Match successfully sent. No message");
+                log(
+                    "Match registered, but couldn't read response message".to_string(),
+                    log_tx,
+                )
+            }
+        },
+        Err(e) => match e {
+            ClientError::ServerError(408) => {
+                error!("ClientError: {}", e);
+                log(
+                    "Report failed, results took too long to reach the server".to_string(),
+                    log_tx,
+                );
+            }
+            _ => {
+                error!("Client Error: {}", e);
+                log(
+                    "Failed to send match result to the server".to_string(),
+                    log_tx,
+                );
+            }
+        },
     }
 }
