@@ -1,5 +1,15 @@
+mod cli;
+mod client;
+mod config;
+mod game;
+mod memory;
+mod runner;
+mod setup;
+mod ui;
+mod validation;
+
 use std::{
-    fs::{OpenOptions},
+    fs::OpenOptions,
     sync::mpsc::{Sender, channel},
 };
 
@@ -12,20 +22,14 @@ use crate::{
     ui::{AppCommand, AppUI},
 };
 
-mod cli;
-mod client;
-mod config;
-mod game;
-mod memory;
-mod runner;
-mod setup;
-mod ui;
-mod validation;
-
 fn main() {
     logger_init();
     let now = chrono::Local::now();
-    info!("=== Atlas Observer v{} started at {} ===", env!("CARGO_PKG_VERSION"), now);
+    info!(
+        "=== Atlas Observer v{} started at {} ===",
+        env!("CARGO_PKG_VERSION"),
+        now
+    );
 
     loop {
         let (log_tx, log_rx) = channel::<String>();
@@ -63,7 +67,7 @@ fn logger_init() {
             .create(true)
             .append(true)
             .open("atlas-observer.log")
-            .unwrap()
+            .unwrap(),
     );
 }
 
