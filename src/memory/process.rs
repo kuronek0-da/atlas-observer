@@ -16,12 +16,16 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum MemoryError {
+    #[error("Module '{0}' not found in process")]
+    ModuleNotFound(String),
+    #[error("VirtualQueryEx failed at address {0}")]
+    QueryFailed(String),
     #[error("Process '{0}' was not found.")]
     ProcessNotFound(String),
     #[error("Multiple '{0}' processes detected")]
     MultipleProcessesError(String),
-    #[error("could not open MBAA")]
-    OpenProcessFailed,
+    #[error("could not open process with pid: {0}")]
+    OpenProcessFailed(u32),
     #[error("error trying to read memory: {0}")]
     ReadFailed(String),
     #[error("failed to parse {0}: unexpected value {1}")]
@@ -67,6 +71,7 @@ impl MemoryManager {
             false,
             caster_pid.as_u32(),
         )?);
+
         if let Some(process) = self.caster_process {
             self.caster_base = Some(get_module_base(process, Self::CASTER)?);
         } else {
@@ -77,9 +82,10 @@ impl MemoryManager {
     }
 
     fn find_single_pid(&self, name: &str) -> Result<Pid, MemoryError> {
-        let mut iter = self.sys
-            .processes_by_exact_name(name.as_ref());
-        let p = iter.next().ok_or(MemoryError::ProcessNotFound(name.to_string()))?;
+        let mut iter = self.sys.processes_by_exact_name(name.as_ref());
+        let p = iter
+            .next()
+            .ok_or(MemoryError::ProcessNotFound(name.to_string()))?;
         if iter.next().is_some() {
             return Err(MemoryError::MultipleProcessesError(name.to_string()));
         }
@@ -103,8 +109,15 @@ impl MemoryManager {
             .is_some()
     }
 
+    pub fn poll_session_ids(&self) -> Result<Vec<String>, MemoryError> {
+        let process = self
+            .caster_process
+            .ok_or(MemoryError::ProcessNotFound(Self::CASTER.to_string()))?;
+        Ok(scan_for_session_ids(process))
+    }
+
     /// Starts reading memory and return a GameState
-    pub fn poll(&self) -> Result<GameState, MemoryError> {
+    pub fn poll_game_state(&self) -> Result<GameState, MemoryError> {
         let mb_process: HANDLE = self
             .mb_process
             .ok_or(MemoryError::ProcessNotFound(Self::MBAA.to_string()))?;
@@ -213,7 +226,11 @@ impl MemoryManager {
             .map_err(|_| MemoryError::ParseFailed("character", char_u32))?;
         let moon =
             Moon::try_from(moon_u32).map_err(|_| MemoryError::ParseFailed("moon", moon_u32))?;
-        Ok(state::Player { character: char, moon, score })
+        Ok(state::Player {
+            character: char,
+            moon,
+            score,
+        })
     }
 }
 
@@ -222,3 +239,49 @@ impl Drop for MemoryManager {
         self.detach();
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::time::{Duration, Instant};
+
+    use crate::memory::MemoryManager;
+
+
+    #[test]
+    fn test_session_id_polling() {
+        let mut m = MemoryManager::new();
+
+        println!("Waiting for CCCaster and MBAA");
+        while m.attach().is_err() {
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        println!("Attached.");
+        let state = m.poll_game_state().expect("Failed to read game memory");
+        println!("Game State: {:?}", state);
+
+        let start = Instant::now();
+        let timeout = Duration::from_secs(15);
+
+        let r = loop {
+            let results = m.poll_session_ids().expect("Failed to read memory.");
+            
+            if !results.is_empty() {
+                break results;
+            }
+
+            if start.elapsed() >= timeout {
+                assert!(false, "Session ID polling timed out. No ids found");
+                break Vec::new();
+            }
+
+            println!("No session id found yet, retrying...");
+            std::thread::sleep(Duration::from_secs(1));
+        };
+        if !r.is_empty() {
+            for id in r.iter() {
+                println!("ID: {}", id);
+            }
+        }
+    }
+}
+

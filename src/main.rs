@@ -17,7 +17,6 @@ use log::{LevelFilter, error, info};
 use simplelog::WriteLogger;
 
 use crate::{
-    cli::update_status,
     config::Config,
     ui::{AppCommand, AppUI},
 };

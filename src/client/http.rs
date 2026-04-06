@@ -226,7 +226,9 @@ mod tests {
     fn test_send_result() {
         let config = Config::load_test().unwrap();
         let client1 = ClientManager::new_test(config.clone()).expect("Failed to load config.");
-        client1.update_state(ClientState::hosting());
+        client1
+            .update_state(ClientState::hosting())
+            .expect("Failed to update state");
 
         let session_id = client1
             .state
@@ -236,7 +238,9 @@ mod tests {
             .expect("Session id not set for client")
             .to_string();
         let client2 = ClientManager::new_test(config).expect("Failed to load config.");
-        client2.update_state(ClientState::JoinedRanked(session_id.clone()));
+        client2
+            .update_state(ClientState::JoinedRanked(session_id.clone()))
+            .expect("Failed to update state");
 
         let result1 = mock_match_result(session_id.clone(), ClientMode::Host);
         println!("{}", result1);

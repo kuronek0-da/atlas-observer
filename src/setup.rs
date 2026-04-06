@@ -2,7 +2,7 @@ use std::sync::mpsc::Sender;
 use log::{error, info};
 
 use crate::{
-    cli::{self, update_status},
+    cli::{self},
     client::{ClientManager, http::ClientError},
     config::Config,
     exit_app, log,

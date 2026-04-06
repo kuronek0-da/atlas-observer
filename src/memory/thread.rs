@@ -41,7 +41,7 @@ pub fn run(game_state_tx: Sender<GameState>, log_tx: &Sender<String>) {
         info!("Attached to MBAA.exe");
         log(format!("Attached to MBAA.exe"), log_tx);
         loop {
-            match memory.poll() {
+            match memory.poll_game_state() {
                 Ok(state) => {
                     report_gamestate(&state, &mut was_in_game, log_tx);
                     if game_state_tx.send(state).is_err() {
