@@ -41,15 +41,19 @@ impl Config {
             ConfigError::FileNotFound => {
                 error!("Config Error: {}", e);
                 eprintln!("Configuration not found.");
-                eprintln!("Trying to creating a new config file...");
+                eprintln!("Trying to create a new config file...");
+                let mut new_config = Config::new();
+                new_config.token = cli::prompt_token();
+                println!("Token updated, trying to save config to file 'config.toml'");
                 match Config::new().save() {
-                    Ok(_) => eprintln!("File created successfully, restart Atlas."),
+                    Ok(_) => eprintln!("File created successfully"),
                     Err(e) => {
                         error!("Config Error: {}", e);
                         eprintln!("Action failed, try giving this app writing permission.");
+                        exit_app(1)
                     }
                 }
-                exit_app(1)
+                new_config
             }
             ConfigError::ParseError(ref field) => {
                 error!("Config Error: {}", e);

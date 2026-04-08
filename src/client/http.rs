@@ -127,23 +127,12 @@ impl ClientManager {
         }
     }
 
-    pub fn send_queue_request(&self) -> Result<MatchedResponse, ClientError> {
-        let state = self.clone_state();
-        let state = state
-            .lock()
-            .map_err(|_| ClientError::StateError)?
-            .to_owned();
-        let res = match state {
-            ClientState::HostingRanked(session_id) => {
-                let body = QueueRequest { session_id };
-                self.send_post("api/queue".to_string(), &body)?
-            }
-            ClientState::JoinedRanked(session_id) => {
-                let body = String::new();
-                self.send_post(format!("api/queue/{}", session_id), &body)?
-            }
-            s => Err(ClientError::InvalidStateError(s))?,
-        };
+    pub fn send_queue_request(
+        &self,
+        session_ids: Vec<String>,
+    ) -> Result<MatchedResponse, ClientError> {
+        let body = QueueRequest { session_ids };
+        let res = self.send_post("api/queue".to_string(), &body)?;
 
         match res.status() {
             StatusCode::REQUEST_TIMEOUT => Err(ClientError::ServerError(res.status().as_u16())),
@@ -227,7 +216,7 @@ mod tests {
         let config = Config::load_test().unwrap();
         let client1 = ClientManager::new_test(config.clone()).expect("Failed to load config.");
         client1
-            .update_state(ClientState::hosting())
+            .update_state(ClientState::PlayingRanked("ABCD".to_string()))
             .expect("Failed to update state");
 
         let session_id = client1
@@ -239,7 +228,7 @@ mod tests {
             .to_string();
         let client2 = ClientManager::new_test(config).expect("Failed to load config.");
         client2
-            .update_state(ClientState::JoinedRanked(session_id.clone()))
+            .update_state(ClientState::PlayingRanked("ABCD".to_string()))
             .expect("Failed to update state");
 
         let result1 = mock_match_result(session_id.clone(), ClientMode::Host);

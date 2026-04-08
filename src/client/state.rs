@@ -1,41 +1,35 @@
 use std::fmt;
 
-use rand::RngExt;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClientState {
     /// Not in ranked
     Idle,
-    /// Hosting, not in match yet
-    HostingRanked(String),
-    /// Joined, not in match yet
-    JoinedRanked(String),
+    /// Queuing ranked
+    WaitingForOpponent,
     /// Currently playing ranked
     PlayingRanked(String),
     Exit,
 }
 
 impl ClientState {
-    pub fn hosting() -> ClientState {
-        ClientState::HostingRanked(ClientState::generate_match_code())
-    }
+    // pub fn hosting() -> ClientState {
+    //     ClientState::HostingRanked(ClientState::generate_match_code())
+    // }
 
-    pub fn session(&self) -> Option<&str> {
+    pub fn session(&self) -> Option<&String> {
         match self {
-            ClientState::HostingRanked(s) => Some(&s),
-            ClientState::JoinedRanked(s) => Some(&s),
-            ClientState::PlayingRanked(s) => Some(&s),
+            ClientState::PlayingRanked(id) => Some(&id),
             _ => None,
         }
     }
 
-    fn generate_match_code() -> String {
-        let mut rng = rand::rng();
-        (0..6)
-            .map(|_| rng.sample(rand::distr::Alphanumeric) as char)
-            .collect::<String>()
-            .to_uppercase()
-    }
+    // fn generate_match_code() -> String {
+    //     let mut rng = rand::rng();
+    //     (0..6)
+    //         .map(|_| rng.sample(rand::distr::Alphanumeric) as char)
+    //         .collect::<String>()
+    //         .to_uppercase()
+    // }
 }
 
 impl std::fmt::Display for ClientState {

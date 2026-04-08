@@ -1,6 +1,6 @@
 use std::sync::mpsc::{Receiver, Sender};
 
-use log::{error, info};
+use log::{debug, error, info};
 
 use crate::{
     client::{ClientManager, ClientState, http::ClientError},
@@ -9,25 +9,26 @@ use crate::{
     validation::{Validator, Validity, result::MatchResult},
 };
 
-pub fn run(game_state_rx: Receiver<GameState>, client: ClientManager, log_tx: &Sender<String>) {
+pub fn run(game_state_rx: Receiver<GameState>, client: &ClientManager, log_tx: Sender<String>) {
     info!("Started validator thread");
+
+    let log_ref = &log_tx;
     let mut validator = Validator::new(client.clone_state());
     let mut is_playing = false;
 
-    for state in game_state_rx {
+    while let Ok(state) = game_state_rx.recv() {
         match validator.validate(state) {
             Ok(validity) => match validity {
                 Validity::Invalid(reason) => {
                     error!("Invalid game state: {}", reason);
-                    log(format!("Invalid game state: {}", reason), log_tx);
+                    log(format!("Invalid game state: {}", reason), log_ref);
                     break;
                 }
                 Validity::MatchFinished(result) => {
                     info!("Match result: {:?}", result);
-                    log(format!("Match ended: {}", &result), log_tx);
+                    log(format!("Match ended: {}", &result), log_ref);
 
-                    info!("Sending match to the server");
-                    log("Sending match to the server...".to_string(), log_tx);
+                    log("Sending match to the server...".to_string(), log_ref);
 
                     let client_clone = client.clone();
                     let log_tx_client = log_tx.clone();
@@ -36,17 +37,17 @@ pub fn run(game_state_rx: Receiver<GameState>, client: ClientManager, log_tx: &S
                         send_match_result(&result, client_clone, &log_tx_client)
                     });
                 }
-                Validity::Valid(session) => {
+                Validity::Valid(session_ids) => {
                     if !is_playing {
                         is_playing = true;
-                        let state = ClientState::PlayingRanked(session);
+                        let state = ClientState::PlayingRanked(session_ids);
                         info!("Changing state to {:?}", state);
                         if let Err(e) = client.update_state(state) {
                             error!("Client Error: {}", e);
                             log(
                                 "Something went wrong when trying to enter 'Playing' state."
                                     .to_string(),
-                                log_tx,
+                                log_ref,
                             );
                         }
                     }
@@ -54,14 +55,17 @@ pub fn run(game_state_rx: Receiver<GameState>, client: ClientManager, log_tx: &S
             },
             Err(e) => {
                 error!("Validator Error: {}", e);
-                log("Failed to validate game state".to_string(), log_tx);
+                log("Failed to validate game state".to_string(), log_ref);
                 break;
             }
         }
     }
+    info!("Validator channel closed.");
+    log("Stopped validating game state".to_string(), log_ref);
 }
 
 fn send_match_result(result: &MatchResult, client: ClientManager, log_tx: &Sender<String>) {
+    debug!("Sending match to the server. IDS: {}", result.session_id());
     match client.send_result(result) {
         Ok(res) => match res.text() {
             Ok(msg) => {

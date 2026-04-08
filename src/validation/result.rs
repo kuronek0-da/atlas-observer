@@ -106,6 +106,10 @@ impl MatchResult {
         let remaining_secs = secs % 60.0;
         format!("{}:{:02}", mins as u32, remaining_secs as u32)
     }
+
+    pub fn session_id(&self) -> &String {
+        &self.session_id
+    }
 }
 
 fn get_unix_timestamp_u64() -> u64 {

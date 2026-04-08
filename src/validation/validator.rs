@@ -10,19 +10,19 @@ use crate::{
 pub struct Validator {
     client_state: Arc<Mutex<ClientState>>,
     matchstate: MatchState,
-    session: Option<String>,
+    session_ids: Option<String>,
 }
 
 impl Validator {
     pub fn new(client_state: Arc<Mutex<ClientState>>) -> Self {
-        let session = match client_state.lock().unwrap().session() {
-            Some(s) => Some(s.to_string()),
+        let session_ids = match client_state.lock().unwrap().session() {
+            Some(s) => Some(s.clone()),
             None => None,
         };
         Validator {
             client_state,
             matchstate: MatchState::default(),
-            session,
+            session_ids,
         }
     }
 
@@ -50,11 +50,11 @@ impl Validator {
                 self.update_matchstate(&game_mode);
                 match &self.matchstate {
                     MatchState::MatchFinished => {
-                        let session_id = match self.client_state.lock() {
+                        let session_ids = match self.client_state.lock() {
                             Ok(state) => match state.session() {
-                                Some(session) => Ok(String::from(session))?,
+                                Some(ids) => Ok(ids.clone())?,
                                 None => Err(StateError::MatchResultError(
-                                    "could not get session id / code".to_string(),
+                                    "could not get session ids / codes".to_string(),
                                 ))?,
                             },
                             Err(_) => Err(StateError::MatchResultError(
@@ -63,7 +63,7 @@ impl Validator {
                         };
 
                         let result = MatchResult::new(
-                            session_id,
+                            session_ids,
                             client_mode,
                             local_player as u8,
                             players,
@@ -73,7 +73,7 @@ impl Validator {
                     }
                     MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),
                     _ => {
-                        let session = match &self.session {
+                        let session = match &self.session_ids {
                             Some(s) => s.clone(),
                             None => Err(StateError::SessionNotFound)?,
                         };
@@ -95,7 +95,7 @@ impl Validator {
                 match &self.matchstate {
                     MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),
                     _ => {
-                        let session = match &self.session {
+                        let session = match &self.session_ids {
                             Some(s) => s.clone(),
                             None => Err(StateError::SessionNotFound)?,
                         };

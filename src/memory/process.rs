@@ -1,5 +1,3 @@
-use std::ffi::OsStr;
-
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use windows::{
     Win32::Foundation::{CloseHandle, HANDLE},
@@ -59,24 +57,14 @@ impl MemoryManager {
     pub fn attach(&mut self) -> Result<(), MemoryError> {
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
         let mb_pid = self.find_single_pid(Self::MBAA)?;
-        let caster_pid = self.find_single_pid(Self::CASTER)?;
 
         self.mb_process = Some(open_process(
             PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
             false,
             mb_pid.as_u32(),
         )?);
-        self.caster_process = Some(open_process(
-            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
-            false,
-            caster_pid.as_u32(),
-        )?);
 
-        if let Some(process) = self.caster_process {
-            self.caster_base = Some(get_module_base(process, Self::CASTER)?);
-        } else {
-            return Err(MemoryError::ProcessNotFound(Self::CASTER.to_string()));
-        };
+        self.find_valid_caster()?;
 
         Ok(())
     }
@@ -92,6 +80,34 @@ impl MemoryManager {
         Ok(p.pid())
     }
 
+    /// Mostly for wine users
+    fn find_valid_caster(&mut self) -> Result<(), MemoryError> {
+        let mut iter = self.sys.processes_by_exact_name(Self::CASTER.as_ref());
+        for process in iter {
+            let Ok(caster_process) = open_process(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, process.pid().as_u32())
+                else { continue };
+
+            let Ok(caster_base) = get_module_base(caster_process, Self::CASTER)
+                else { continue };
+
+            let client_mode_addr = caster_base + CLIENT_MODE_OFFSET;
+            let Ok(client_value) = read_u8!(caster_process, client_mode_addr)
+                else { continue };
+
+            if let Ok(cm) = ClientMode::try_from(client_value) {
+                if matches!(cm, ClientMode::Unknown) {
+                    continue;
+                }
+
+                self.caster_process = Some(caster_process);
+                self.caster_base = Some(caster_base);
+                return Ok(());
+            }
+        }
+
+        Err(MemoryError::ProcessNotFound(Self::CASTER.to_string()))
+    }
+
     /// Close process handle
     pub fn detach(&mut self) {
         if let Some(handle) = self.mb_process.take() {
@@ -101,7 +117,7 @@ impl MemoryManager {
         }
     }
 
-    pub fn is_running(&mut self) -> bool {
+    pub fn is_melty_running(&mut self) -> bool {
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
         self.sys
             .processes_by_exact_name(Self::MBAA.as_ref())
@@ -246,7 +262,6 @@ mod test {
 
     use crate::memory::MemoryManager;
 
-
     #[test]
     fn test_session_id_polling() {
         let mut m = MemoryManager::new();
@@ -264,7 +279,7 @@ mod test {
 
         let r = loop {
             let results = m.poll_session_ids().expect("Failed to read memory.");
-            
+
             if !results.is_empty() {
                 break results;
             }
@@ -284,4 +299,3 @@ mod test {
         }
     }
 }
-
