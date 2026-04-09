@@ -74,7 +74,7 @@ pub fn run(client: ClientManager, log_tx: Sender<String>, cmd_rx: Receiver<AppCo
         let queue_thread =
             std::thread::spawn(move || match client_clone.send_queue_request(session_ids) {
                 Ok(res) => {
-                    info!("Playing ranked against {}", res.opponent_discord_username);
+                    info!("Opponent: {} | Session ID: {}", res.opponent_discord_username, res.session_id);
                     log(
                         format!("Playing ranked against {}", res.opponent_discord_username),
                         &log_tx_queue,
@@ -142,6 +142,10 @@ pub fn run(client: ClientManager, log_tx: Sender<String>, cmd_rx: Receiver<AppCo
         validation::run(game_state_rx, &client, log_tx.clone());
     }
     info!("Shutting down runner thread.");
+    if let Err(e) = client.update_state(ClientState::Exit) {
+        error!("Client Error: {}", e);
+        log("Internal error, check logs for details.".to_string(), &log_tx);
+    }
 }
 
 /// Returns true if a command was received
@@ -187,8 +191,6 @@ fn cancel_and_exit_from_command(
                     "Internal error trying to execute command. Check logs for details".to_string(),
                     log_tx,
                 );
-            } else {
-                log("Queue canceled".to_string(), log_tx);
             }
 
             is_queue_canceled.store(true, Ordering::Relaxed);

@@ -1,8 +1,10 @@
 use std::{
-    env, sync::{
+    env,
+    sync::{
         Arc, Mutex, MutexGuard,
         mpsc::{Receiver, Sender},
-    }, time::Duration
+    },
+    time::Duration,
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -66,6 +68,10 @@ impl AppUI {
     }
 
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<(), UIError> {
+        let secs_to_shutdown = 3;
+        let mut countdown = secs_to_shutdown;
+        let mut countdown_started = false;
+
         while !self.exit {
             terminal
                 .draw(|frame| {
@@ -74,13 +80,24 @@ impl AppUI {
                     }
                 })
                 .map_err(|e| UIError::TerminalError(e.to_string()))?;
+
+            if *self.client_state()? == ClientState::Exit {
+                let should_exit = self.should_exit(&mut countdown, countdown_started);
+
+                if countdown_started {
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+
+                self.exit = should_exit;
+                countdown = countdown.saturating_sub(1);
+
+                countdown_started = true;
+                continue;
+            }
+
             self.handle_input()?;
             if let Ok(log) = self.log_rx.try_recv() {
                 self.push_log(log);
-            }
-
-            if *self.client_state()? == ClientState::Exit {
-                self.exit = true;
             }
         }
         Ok(())
@@ -101,7 +118,7 @@ impl AppUI {
             Line::from(version.dim()),
         ]))
         .alignment(Alignment::Center)
-        .block(Block::new().borders(Borders::ALL));
+        .block(Block::new());
         frame.render_widget(title, layout[0]);
 
         // Logs
@@ -110,7 +127,7 @@ impl AppUI {
             .iter()
             .map(|l| ListItem::from(format!("[LOG] {}", l.trim())))
             .collect();
-        let logs = List::new(log_items).block(Block::new().borders(Borders::ALL));
+        let logs = List::new(log_items).block(Block::new());
         frame.render_stateful_widget(logs, layout[1], &mut self.list_state);
 
         // Input
@@ -126,7 +143,7 @@ impl AppUI {
             Line::from(commands),
             Line::from(format!("> {}", self.input)),
         ]))
-        .block(Block::bordered());
+        .block(Block::new());
         frame.render_widget(cmd_input, layout[2]);
 
         let cursor_x = layout[2].x + 3 + self.input.len() as u16;
@@ -207,5 +224,14 @@ impl AppUI {
     pub fn push_log(&mut self, log: String) {
         self.logs.push(log);
         self.list_state.select_last();
+    }
+
+    fn should_exit(&mut self, countdown: &mut u8, countdown_started: bool) -> bool {
+        if !countdown_started {
+            self.push_log(String::new());
+        }
+        let last_index = self.logs.len() - 1;
+        self.logs[last_index] = format!("Atlas will be closing in {} seconds", countdown);
+        *countdown == 0
     }
 }

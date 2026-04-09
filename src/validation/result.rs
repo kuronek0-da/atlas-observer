@@ -39,7 +39,7 @@ impl fmt::Display for MatchResult {
         let p2 = &self.p2;
         write!(
             f,
-            "{:?}-{:?} ({}x{}) {:?}-{:?} | Duration: {} | Code/Session: {}",
+            "{:?}-{:?} ({}x{}) {:?}-{:?} | Duration: {}",
             p1.moon,
             p1.character,
             p1.score,
@@ -47,7 +47,6 @@ impl fmt::Display for MatchResult {
             p2.moon,
             p2.character,
             self.fmt_real_timer(),
-            self.session_id
         )
     }
 }

@@ -1,12 +1,14 @@
 use std::fmt;
 
+    /// * `Idle` - Not in ranked
+    /// * `WaitingForOpponent` - Queuing ranked
+    /// * `PlayingRanked` - Currently playing ranked
+    /// * `PlayingRanked` - Currently playing ranked
+    /// * `Exit`
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClientState {
-    /// Not in ranked
     Idle,
-    /// Queuing ranked
     WaitingForOpponent,
-    /// Currently playing ranked
     PlayingRanked(String),
     Exit,
 }

@@ -60,7 +60,7 @@ pub fn run(game_state_rx: Receiver<GameState>, client: &ClientManager, log_tx: S
             }
         }
     }
-    info!("Validator channel closed.");
+    info!("Validator thread closed.");
     log("Stopped validating game state".to_string(), log_ref);
 }
 
