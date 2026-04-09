@@ -118,7 +118,7 @@ impl AppUI {
             Line::from(version.dim()),
         ]))
         .alignment(Alignment::Center)
-        .block(Block::new());
+        .block(Block::bordered());
         frame.render_widget(title, layout[0]);
 
         // Logs
@@ -127,7 +127,7 @@ impl AppUI {
             .iter()
             .map(|l| ListItem::from(format!("[LOG] {}", l.trim())))
             .collect();
-        let logs = List::new(log_items).block(Block::new());
+        let logs = List::new(log_items).block(Block::bordered());
         frame.render_stateful_widget(logs, layout[1], &mut self.list_state);
 
         // Input
@@ -143,7 +143,7 @@ impl AppUI {
             Line::from(commands),
             Line::from(format!("> {}", self.input)),
         ]))
-        .block(Block::new());
+        .block(Block::bordered());
         frame.render_widget(cmd_input, layout[2]);
 
         let cursor_x = layout[2].x + 3 + self.input.len() as u16;
