@@ -220,7 +220,7 @@ fn spawn_memory_worker(
     std::thread::spawn(move || {
         memory::run(
             game_state_tx,
-            &log_tx_mt,
+            log_tx_mt,
             ids_tx,
             is_queue_canceled,
             are_players_paired,
