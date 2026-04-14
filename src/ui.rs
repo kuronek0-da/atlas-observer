@@ -1,7 +1,6 @@
 use std::{
     env,
     sync::{
-        Arc, Mutex, MutexGuard,
         mpsc::{Receiver, Sender},
     },
     time::Duration,
@@ -13,11 +12,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout},
     style::Stylize,
     text::{Line, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, List, ListItem, ListState, Paragraph},
 };
 use thiserror::Error;
 
-use crate::client::{ClientState, http::ClientError};
+use crate::client::{ClientState};
 
 #[derive(Error, Debug)]
 pub enum UIError {
@@ -25,8 +24,6 @@ pub enum UIError {
     TerminalError(String),
     #[error("Error while handling an event: {0}")]
     EventError(String),
-    #[error(transparent)]
-    StateError(#[from] ClientError),
 }
 
 #[derive(Debug, Clone)]
@@ -39,31 +36,29 @@ pub enum AppCommand {
 pub struct AppUI {
     input: String,
     pub exit: bool,
-    client_state: Arc<Mutex<ClientState>>,
+    cached_state: ClientState,
     logs: Vec<String>,
     list_state: ListState,
     log_rx: Receiver<String>,
     cmd_tx: Sender<AppCommand>,
+    state_rx: Receiver<ClientState>
 }
 
 impl AppUI {
     pub fn new(
         log_rx: Receiver<String>,
         cmd_tx: Sender<AppCommand>,
-        client_state: Arc<Mutex<ClientState>>,
+        state_rx: Receiver<ClientState>
     ) -> Self {
         AppUI {
             input: String::new(),
             exit: false,
-            client_state,
+            cached_state: ClientState::Idle,
             logs: Vec::new(),
-            list_state: {
-                let mut s = ListState::default();
-                s.select_first();
-                s
-            },
+            list_state: ListState::default(),
             log_rx,
             cmd_tx,
+            state_rx,
         }
     }
 
@@ -73,6 +68,10 @@ impl AppUI {
         let mut countdown_started = false;
 
         while !self.exit {
+            if let Ok(state) = self.state_rx.try_recv() {
+                self.cached_state = state;
+            }
+
             terminal
                 .draw(|frame| {
                     if let Err(e) = self.render_ui(frame) {
@@ -81,7 +80,7 @@ impl AppUI {
                 })
                 .map_err(|e| UIError::TerminalError(e.to_string()))?;
 
-            if *self.client_state()? == ClientState::Exit {
+            if self.cached_state == ClientState::Exit {
                 let should_exit = self.should_exit(&mut countdown, countdown_started);
 
                 if countdown_started {
@@ -131,7 +130,7 @@ impl AppUI {
         frame.render_stateful_widget(logs, layout[1], &mut self.list_state);
 
         // Input
-        let client_state = self.client_state()?;
+        let client_state = &self.cached_state;
 
         let commands = match *client_state {
             ClientState::Idle => "Commands: start | exit",
@@ -151,12 +150,6 @@ impl AppUI {
         frame.set_cursor_position((cursor_x, cursor_y));
 
         Ok(())
-    }
-
-    fn client_state(&self) -> Result<MutexGuard<'_, ClientState>, UIError> {
-        self.client_state
-            .lock()
-            .map_err(|_| ClientError::StateError.into())
     }
 
     pub fn handle_input(&mut self) -> Result<(), UIError> {
@@ -203,15 +196,17 @@ impl AppUI {
     }
 
     fn handle_cmd(&mut self, cmd: String) -> Result<(), UIError> {
-        let is_idle = *self.client_state()? == ClientState::Idle;
-        let can_stop = *self.client_state()? == ClientState::WaitingForOpponent;
+        let is_idle = self.cached_state == ClientState::Idle;
+        let can_stop = self.cached_state == ClientState::WaitingForOpponent;
+        let is_playing = matches!(self.cached_state, ClientState::PlayingRanked(_));
 
         match cmd.as_str() {
             "start" if is_idle => self.send_app_cmd(AppCommand::Start),
             "stop" if can_stop => self.send_app_cmd(AppCommand::Stop),
-            "exit" => self.send_app_cmd(AppCommand::Exit),
+            "exit" if !is_playing => self.send_app_cmd(AppCommand::Exit),
             cmd => self.push_log(format!("Invalid command '{}'", cmd)),
         }
+
         Ok(())
     }
 
@@ -223,7 +218,6 @@ impl AppUI {
 
     pub fn push_log(&mut self, log: String) {
         self.logs.push(log);
-        self.list_state.select_last();
     }
 
     fn should_exit(&mut self, countdown: &mut u8, countdown_started: bool) -> bool {

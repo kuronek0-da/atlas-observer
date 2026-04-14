@@ -13,7 +13,10 @@ use log::{error, info};
 use crate::{
     game::state::GameState,
     log,
-    memory::{MemoryManager, process::MemoryError},
+    memory::{
+        MemoryManager,
+        process::{MemoryError},
+    },
 };
 
 /// Starts memory reading poll and reporting to the ui
@@ -48,17 +51,32 @@ pub fn run(
             return;
         }
 
-        if !has_logged_mpe {
-            if let MemoryError::MultipleProcessesError(ref process) = e {
-                let close_msg = format!("Close the other '{}' processes.", process);
-                error!("Memory Error: {}", e);
-                log(close_msg, log_tx);
+        match e {
+            MemoryError::MultipleProcessesError(_) if !has_logged_mpe => {
+                if let MemoryError::MultipleProcessesError(ref process) = e {
+                    let close_msg = format!("Close the other '{}' processes.", process);
+                    error!("Memory Error: {}", e);
+                    log(close_msg, log_tx);
 
-                has_logged_mpe = true;
-            } else {
-                has_logged_mpe = false;
+                    has_logged_mpe = true;
+                } else {
+                    has_logged_mpe = false;
+                }
             }
+            MemoryError::InvalidCCCaster => {
+                error!("Memory Error: {}", e);
+                log(
+                    "Invalid CCCaster version or player is not on netplay.".to_string(),
+                    log_tx,
+                );
+
+                is_queue_canceled.store(true, Ordering::Relaxed);
+                info!("Shutting down memory thread");
+                return;
+            }
+            _ => {}
         }
+
         sleep(Duration::from_secs(2));
     }
 
@@ -106,17 +124,20 @@ pub fn run(
             log_tx,
         );
         info!("Shutting down memory thread.");
+        log("Stopped reading MBAA".to_string(), log_tx);
         return;
     }
 
     while !are_players_paired.load(Ordering::Relaxed) {
         if is_queue_canceled.load(Ordering::Relaxed) {
             info!("Shutting down memory thread.");
+            log("Stopped reading MBAA".to_string(), log_tx);
             return;
         }
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_secs(1));
     }
 
+    info!("Memory thread: started reading MBAA");
     // Starts reading MBAA and tries to send to validator thread
     let mut was_in_game = true;
     loop {
@@ -132,6 +153,7 @@ pub fn run(
                 sleep(Duration::from_millis(16));
             }
             Err(e) => {
+                sleep(Duration::from_secs(1));
                 if !memory.is_melty_running() {
                     info!("Game closed");
                     log(format!("Game closed"), log_tx);
@@ -142,7 +164,7 @@ pub fn run(
                         log_tx,
                     );
                     log(
-                        "Make sure you're using the right version".to_string(),
+                        "Make sure you're using the right CCCaster version".to_string(),
                         log_tx,
                     );
                 }
@@ -165,7 +187,7 @@ fn report_gamestate(state: &GameState, was_in_game: &mut bool, log_tx: &Sender<S
         GameState::InGame { .. } if !*was_in_game => {
             info!("In game: {:?}", state);
             *was_in_game = true;
-            log("Match running...".to_string(), log_tx);
+            log("Playing a match...".to_string(), log_tx);
         }
         _ => {}
     }

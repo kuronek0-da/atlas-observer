@@ -17,8 +17,7 @@ use log::{LevelFilter, error, info};
 use simplelog::WriteLogger;
 
 use crate::{
-    config::Config,
-    ui::{AppCommand, AppUI},
+    client::ClientState, config::Config, ui::{AppCommand, AppUI}
 };
 
 fn main() {
@@ -32,6 +31,7 @@ fn main() {
 
     let (log_tx, log_rx) = channel::<String>();
     let (cmd_tx, cmd_rx) = channel::<AppCommand>();
+    let (state_tx, state_rx) = channel::<ClientState>();
 
     log(
         "[Warning] Ranked mode is only supported on cccaster v3.1.008.".to_string(),
@@ -41,10 +41,9 @@ fn main() {
     let config = Config::load();
     let client = setup::create_client(config, log_tx.clone());
 
-    let client_state_clone = client.clone_state();
-    let mut app = AppUI::new(log_rx, cmd_tx, client_state_clone);
+    let mut app = AppUI::new(log_rx, cmd_tx, state_rx);
 
-    std::thread::spawn(move || runner::run(client, log_tx, cmd_rx));
+    std::thread::spawn(move || runner::run(client, log_tx, cmd_rx, state_tx));
 
     loop {
         if let Err(e) = ratatui::run(|terminal| app.run(terminal)) {

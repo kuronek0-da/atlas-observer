@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -168,10 +168,6 @@ impl ClientManager {
         let mut data = self.state.lock().map_err(|_| ClientError::StateError)?;
         *data = state;
         Ok(())
-    }
-
-    pub fn client_state(&self) -> MutexGuard<'_, ClientState> {
-        self.state.lock().unwrap()
     }
 }
 

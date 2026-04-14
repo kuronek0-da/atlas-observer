@@ -20,6 +20,8 @@ pub enum MemoryError {
     QueryFailed(String),
     #[error("Process '{0}' was not found.")]
     ProcessNotFound(String),
+    #[error("Could not read valid values from CCCaster.")]
+    InvalidCCCaster,
     #[error("Multiple '{0}' processes detected")]
     MultipleProcessesError(String),
     #[error("could not open process with pid: {0}")]
@@ -30,6 +32,9 @@ pub enum MemoryError {
     ParseFailed(&'static str, u32),
 }
 
+pub const MBAA: &str = "MBAA.exe";
+pub const CASTER: &str = "cccaster.v3.1.exe";
+
 pub struct MemoryManager {
     sys: System,
     mb_process: Option<HANDLE>,
@@ -38,9 +43,6 @@ pub struct MemoryManager {
 }
 
 impl MemoryManager {
-    const MBAA: &str = "MBAA.exe";
-    const CASTER: &str = "cccaster.v3.1.exe";
-
     pub fn new() -> Self {
         let sys = System::new_with_specifics(
             RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
@@ -56,7 +58,7 @@ impl MemoryManager {
     /// Attaches to MBAA.exe
     pub fn attach(&mut self) -> Result<(), MemoryError> {
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
-        let mb_pid = self.find_single_pid(Self::MBAA)?;
+        let mb_pid = self.find_single_pid(MBAA)?;
 
         self.mb_process = Some(open_process(
             PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
@@ -64,8 +66,10 @@ impl MemoryManager {
             mb_pid.as_u32(),
         )?);
 
-        self.find_valid_caster()?;
-
+        if let Err(e) = self.find_valid_caster() {
+            self.detach();
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -82,17 +86,26 @@ impl MemoryManager {
 
     /// Mostly for wine users
     fn find_valid_caster(&mut self) -> Result<(), MemoryError> {
-        let mut iter = self.sys.processes_by_exact_name(Self::CASTER.as_ref());
+        let iter = self.sys.processes_by_exact_name(CASTER.as_ref());
+        let mut any_found = false;
         for process in iter {
-            let Ok(caster_process) = open_process(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, process.pid().as_u32())
-                else { continue };
+            let Ok(caster_process) = open_process(
+                PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+                false,
+                process.pid().as_u32(),
+            ) else {
+                continue;
+            };
 
-            let Ok(caster_base) = get_module_base(caster_process, Self::CASTER)
-                else { continue };
+            let Ok(caster_base) = get_module_base(caster_process, CASTER) else {
+                continue;
+            };
 
+            any_found = true;
             let client_mode_addr = caster_base + CLIENT_MODE_OFFSET;
-            let Ok(client_value) = read_u8!(caster_process, client_mode_addr)
-                else { continue };
+            let Ok(client_value) = read_u8!(caster_process, client_mode_addr) else {
+                continue;
+            };
 
             if let Ok(cm) = ClientMode::try_from(client_value) {
                 if matches!(cm, ClientMode::Unknown) {
@@ -105,7 +118,11 @@ impl MemoryManager {
             }
         }
 
-        Err(MemoryError::ProcessNotFound(Self::CASTER.to_string()))
+        if !any_found {
+            return Err(MemoryError::ProcessNotFound(CASTER.to_string()));
+        }
+
+        Err(MemoryError::InvalidCCCaster)
     }
 
     /// Close process handle
@@ -115,12 +132,17 @@ impl MemoryManager {
                 let _ = CloseHandle(handle);
             }
         }
+        if let Some(handle) = self.caster_process.take() {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+        }
     }
 
     pub fn is_melty_running(&mut self) -> bool {
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
         self.sys
-            .processes_by_exact_name(Self::MBAA.as_ref())
+            .processes_by_exact_name(MBAA.as_ref())
             .next()
             .is_some()
     }
@@ -128,7 +150,7 @@ impl MemoryManager {
     pub fn poll_session_ids(&self) -> Result<Vec<String>, MemoryError> {
         let process = self
             .caster_process
-            .ok_or(MemoryError::ProcessNotFound(Self::CASTER.to_string()))?;
+            .ok_or(MemoryError::ProcessNotFound(CASTER.to_string()))?;
         Ok(scan_for_session_ids(process))
     }
 
@@ -136,10 +158,10 @@ impl MemoryManager {
     pub fn poll_game_state(&self) -> Result<GameState, MemoryError> {
         let mb_process: HANDLE = self
             .mb_process
-            .ok_or(MemoryError::ProcessNotFound(Self::MBAA.to_string()))?;
+            .ok_or(MemoryError::ProcessNotFound(MBAA.to_string()))?;
         let caster_process = self
             .caster_process
-            .ok_or(MemoryError::ProcessNotFound(Self::CASTER.to_string()))?;
+            .ok_or(MemoryError::ProcessNotFound(CASTER.to_string()))?;
 
         self.read_game_state(mb_process, caster_process)
     }
@@ -150,8 +172,10 @@ impl MemoryManager {
         caster_process: HANDLE,
     ) -> Result<GameState, MemoryError> {
         let game_mode = self.read_mode(mb_process)?;
+
         let local_player = self.read_local_player(caster_process)?;
         let client_mode = self.read_client_mode(caster_process)?;
+
         match game_mode {
             GameMode::InGame | GameMode::Retry => {
                 // CCCaster
