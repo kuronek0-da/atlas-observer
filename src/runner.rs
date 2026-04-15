@@ -163,25 +163,7 @@ fn acquire_session_ids(
     game_state_tx: Sender<GameState>,
     cmd_rx: &Receiver<AppCommand>,
 ) -> Result<Option<Vec<String>>, RunnerError> {
-    //let are_players_paired = Arc::clone(&ctx.are_paired);
-    //let is_queue_canceled = Arc::clone(&ctx.is_canceled);
-
-    //let state_tx_mt = ctx.state_tx.clone();
-    //let log_tx_mt = ctx.log_tx.clone();
-    //let (ids_tx, ids_rx) = channel();
-
     let ids_rx = spawn_memory_worker(ctx, game_state_tx);
-
-    //// Attaching process
-    //std::thread::spawn(move || {
-    //    memory::run(
-    //        game_state_tx,
-    //        &log_tx_mt,
-    //        ids_tx,
-    //        is_queue_canceled,
-    //        are_players_paired,
-    //    )
-    //});
 
     loop {
         if let Some(state) = check_cancel_cmd(&ctx, cmd_rx) {
