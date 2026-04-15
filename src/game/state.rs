@@ -19,6 +19,22 @@ pub enum GameState {
     },
 }
 
+impl GameState {
+    pub fn client_mode(&self) -> &ClientMode {
+        match self {
+            Self::InGame { client_mode, .. } => client_mode,
+            Self::NotInGame { client_mode, .. } => client_mode,
+        }
+    }
+
+    pub fn game_mode(&self) -> &GameMode {
+        match self {
+            Self::InGame { game_mode, .. } => game_mode,
+            Self::NotInGame { game_mode, .. } => game_mode,
+        }
+    }
+}
+
 // Currently clashing with MatchTimer, i might delete or use it for validation later
 #[derive(Debug)]
 pub struct GameTimers {

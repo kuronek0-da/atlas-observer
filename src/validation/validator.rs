@@ -8,22 +8,20 @@ use crate::{
 };
 
 pub struct Validator {
-    client_state: Arc<Mutex<ClientState>>,
     matchstate: MatchState,
-    session_ids: Option<String>,
+    session_id: String,
 }
 
 impl Validator {
-    pub fn new(client_state: Arc<Mutex<ClientState>>) -> Self {
-        let session_ids = match client_state.lock().unwrap().session() {
-            Some(s) => Some(s.clone()),
-            None => None,
+    pub fn new(client_state: Arc<Mutex<ClientState>>) -> Result<Self, StateError> {
+        let session_id = match client_state.lock().unwrap().session() {
+            Some(s) => s.clone(),
+            None => return Err(StateError::SessionNotFound),
         };
-        Validator {
-            client_state,
+        Ok(Validator {
             matchstate: MatchState::default(),
-            session_ids,
-        }
+            session_id,
+        })
     }
 
     fn validate_client_mode(&self, client_mode: &ClientMode) -> Result<(), String> {
@@ -34,79 +32,125 @@ impl Validator {
     }
 
     pub fn validate(&mut self, state: GameState) -> Result<Validity, StateError> {
-        match state {
-            // During in-game and retry menu
-            GameState::InGame {
-                local_player,
-                client_mode,
-                game_mode,
-                timers,
-                players,
-            } => {
-                if let Err(msg) = self.validate_client_mode(&client_mode) {
-                    return Ok(Validity::Invalid(msg));
-                }
+        if let Err(msg) = self.validate_client_mode(state.client_mode()) {
+            return Ok(Validity::Invalid(msg));
+        }
 
-                self.update_matchstate(&game_mode);
-                match &self.matchstate {
-                    MatchState::MatchFinished => {
-                        let session_ids = match self.client_state.lock() {
-                            Ok(state) => match state.session() {
-                                Some(ids) => Ok(ids.clone())?,
-                                None => Err(StateError::MatchResultError(
-                                    "could not get session ids / codes".to_string(),
-                                ))?,
-                            },
-                            Err(_) => Err(StateError::MatchResultError(
-                                "could not get client state".to_string(),
-                            ))?,
-                        };
+        self.update_matchstate(state.game_mode());
 
-                        let result = MatchResult::new(
-                            session_ids,
-                            client_mode,
-                            local_player as u8,
-                            players,
-                            timers,
-                        )?;
-                        return Ok(Validity::MatchFinished(result));
-                    }
-                    MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),
-                    _ => {
-                        let session = match &self.session_ids {
-                            Some(s) => s.clone(),
-                            None => Err(StateError::SessionNotFound)?,
-                        };
-                        Ok(Validity::Valid(session))
-                    }
-                }
+        if let GameState::InGame { .. } = &state {
+            if matches!(self.matchstate, MatchState::MatchFinished) {
+                return self.handle_match_finished(state);
             }
-            // during char select or transition states
-            GameState::NotInGame {
-                game_mode,
-                client_mode,
-                host_position: _,
-            } => {
-                if let Err(msg) = self.validate_client_mode(&client_mode) {
-                    return Ok(Validity::Invalid(msg));
-                }
+        }
 
-                self.update_matchstate(&game_mode);
-                match &self.matchstate {
-                    MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),
-                    _ => {
-                        let session = match &self.session_ids {
-                            Some(s) => s.clone(),
-                            None => Err(StateError::SessionNotFound)?,
-                        };
-                        Ok(Validity::Valid(session))
-                    }
-                }
-            }
+        match &self.matchstate {
+            MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),
+            _ => Ok(Validity::Valid),
         }
     }
 
-    pub fn update_matchstate(&mut self, game_mode: &GameMode) {
+    pub fn get_session(&self) -> String {
+        self.session_id.clone()
+    }
+
+    fn handle_match_finished(&mut self, state: GameState) -> Result<Validity, StateError> {
+        if let GameState::InGame {
+            local_player,
+            client_mode,
+            players,
+            timers,
+            ..
+        } = state
+        {
+            let session_ids = self.get_session();
+            let result = MatchResult::new(
+                session_ids,
+                client_mode,
+                local_player as u8,
+                players,
+                timers,
+            )?;
+
+            return Ok(Validity::MatchFinished(result));
+        }
+        Err(StateError::MatchResultError("not a valid state".into())) // Should be unreachable
+    }
+
+    //pub fn validate(&mut self, state: GameState) -> Result<Validity, StateError> {
+    //    match state {
+    //        // During in-game and retry menu
+    //        GameState::InGame {
+    //            local_player,
+    //            client_mode,
+    //            game_mode,
+    //            timers,
+    //            players,
+    //        } => {
+    //            if let Err(msg) = self.validate_client_mode(&client_mode) {
+    //                return Ok(Validity::Invalid(msg));
+    //            }
+
+    //            self.update_matchstate(&game_mode);
+    //            match &self.matchstate {
+    //                MatchState::MatchFinished => {
+    //                    let session_ids = match self.client_state.lock() {
+    //                        Ok(state) => match state.session() {
+    //                            Some(ids) => Ok(ids.clone())?,
+    //                            None => Err(StateError::MatchResultError(
+    //                                "could not get session ids / codes".to_string(),
+    //                            ))?,
+    //                        },
+    //                        Err(_) => Err(StateError::MatchResultError(
+    //                            "could not get client state".to_string(),
+    //                        ))?,
+    //                    };
+
+    //                    let result = MatchResult::new(
+    //                        session_ids,
+    //                        client_mode,
+    //                        local_player as u8,
+    //                        players,
+    //                        timers,
+    //                    )?;
+    //                    return Ok(Validity::MatchFinished(result));
+    //                }
+    //                MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),
+    //                _ => {
+    //                    let session = match &self.session_id {
+    //                        Some(s) => s.clone(),
+    //                        None => Err(StateError::SessionNotFound)?,
+    //                    };
+    //                    Ok(Validity::Valid)
+    //                }
+    //            }
+    //        }
+    //        // during char select or transition states
+    //        GameState::NotInGame {
+    //            game_mode,
+    //            client_mode,
+    //            host_position: _,
+    //        } => {
+    //            if let Err(msg) = self.validate_client_mode(&client_mode) {
+    //                return Ok(Validity::Invalid(msg));
+    //            }
+
+    //            self.update_matchstate(&game_mode);
+    //            match &self.matchstate {
+    //                MatchState::Invalid(reason) => Ok(Validity::Invalid(reason.clone())),
+    //                _ => {
+    //                    let session = match &self.session_id {
+    //                        Some(s) => s.clone(),
+    //                        None => Err(StateError::SessionNotFound)?,
+    //                    };
+    //                    Ok(Validity::Valid)
+    //                }
+    //            }
+    //        }
+    //    }
+    //}
+
+    fn update_matchstate(&mut self, game_mode: &GameMode) {
         if !self.matchstate.is_valid_before(game_mode) {
             self.matchstate = MatchState::invalid_mode(game_mode);
             return;
@@ -130,7 +174,7 @@ impl Validator {
 
 #[derive(Debug)]
 pub enum Validity {
-    Valid(String),
+    Valid,
     Invalid(String),
     MatchFinished(MatchResult),
 }
