@@ -1,8 +1,6 @@
 use std::{
     env,
-    sync::{
-        mpsc::{Receiver, Sender},
-    },
+    sync::mpsc::{Receiver, Sender},
     time::Duration,
 };
 
@@ -16,7 +14,7 @@ use ratatui::{
 };
 use thiserror::Error;
 
-use crate::client::{ClientState};
+use crate::client::ClientState;
 
 #[derive(Error, Debug)]
 pub enum UIError {
@@ -41,14 +39,14 @@ pub struct AppUI {
     list_state: ListState,
     log_rx: Receiver<String>,
     cmd_tx: Sender<AppCommand>,
-    state_rx: Receiver<ClientState>
+    state_rx: Receiver<ClientState>,
 }
 
 impl AppUI {
     pub fn new(
         log_rx: Receiver<String>,
         cmd_tx: Sender<AppCommand>,
-        state_rx: Receiver<ClientState>
+        state_rx: Receiver<ClientState>,
     ) -> Self {
         AppUI {
             input: String::new(),
@@ -135,8 +133,8 @@ impl AppUI {
         let commands = match *client_state {
             ClientState::Idle => "Commands: start | exit",
             ClientState::WaitingForOpponent => "Commands: stop | exit",
-            ClientState::PlayingRanked(_) => "Commands: exit (please, close MBAA first)",
-            _ => "Commands: stop | exit",
+            ClientState::PlayingRanked(_) => "Commands: (must close MBAA first)",
+            _ => "",
         };
         let cmd_input = Paragraph::new(Text::from(vec![
             Line::from(commands),
@@ -152,6 +150,13 @@ impl AppUI {
         Ok(())
     }
 
+    fn can_exit(&self) -> bool {
+        matches!(
+            self.cached_state,
+            ClientState::Idle | ClientState::WaitingForOpponent
+        )
+    }
+
     pub fn handle_input(&mut self) -> Result<(), UIError> {
         if event::poll(Duration::from_millis(16)).map_err(|e| UIError::EventError(e.to_string()))? {
             if let Event::Key(key) =
@@ -162,7 +167,7 @@ impl AppUI {
                 }
                 match key.code {
                     KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        self.send_app_cmd(AppCommand::Exit);
+                        self.handle_cmd("exit".into());
                     }
                     KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         let content = cli_clipboard::get_contents()
@@ -198,12 +203,11 @@ impl AppUI {
     fn handle_cmd(&mut self, cmd: String) -> Result<(), UIError> {
         let is_idle = self.cached_state == ClientState::Idle;
         let can_stop = self.cached_state == ClientState::WaitingForOpponent;
-        let is_playing = matches!(self.cached_state, ClientState::PlayingRanked(_));
 
         match cmd.as_str() {
             "start" if is_idle => self.send_app_cmd(AppCommand::Start),
             "stop" if can_stop => self.send_app_cmd(AppCommand::Stop),
-            "exit" if !is_playing => self.send_app_cmd(AppCommand::Exit),
+            "exit" if self.can_exit() => self.send_app_cmd(AppCommand::Exit),
             cmd => self.push_log(format!("Invalid command '{}'", cmd)),
         }
 
@@ -218,6 +222,7 @@ impl AppUI {
 
     pub fn push_log(&mut self, log: String) {
         self.logs.push(log);
+        self.list_state.select_last();
     }
 
     fn should_exit(&mut self, countdown: &mut u8, countdown_started: bool) -> bool {

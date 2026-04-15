@@ -14,13 +14,17 @@ use thiserror::Error;
 use crate::{
     game::state::GameState,
     log,
-    memory::{MemoryManager, process::MemoryError},
+    memory::{MemoryManager, addresses::{ClientMode, GameMode}, process::MemoryError},
 };
 
 #[derive(Error, Debug)]
 enum ThreadError {
     #[error("Memory polling for ids timed out")]
     IdsPollingTimeoutError,
+    #[error("Validator thread dropped")]
+    ValidatorDropped,
+    #[error("Validation timed out")]
+    ValidationTimeout,
     #[error("Memory Error: {0}")]
     MemoryError(#[from] MemoryError),
 }
@@ -38,6 +42,7 @@ pub fn run(
     is_queue_canceled: Arc<AtomicBool>,
     are_players_paired: Arc<AtomicBool>,
 ) {
+    info!("Memory thread started");
     let mut memory = MemoryManager::new();
 
     // Ensure clean state
@@ -95,8 +100,6 @@ fn wait_for_clean_start(
             log_tx,
         );
         sleep(Duration::from_secs(2));
-    } else {
-        log("Waiting for MBAA and CCCaster".into(), log_tx);
     }
 
     while memory.is_melty_running() {
@@ -105,6 +108,7 @@ fn wait_for_clean_start(
         }
         sleep(Duration::from_secs(2));
     }
+    log("Waiting for MBAA and CCCaster".into(), log_tx);
     PollResult::Ready(())
 }
 
@@ -126,6 +130,11 @@ fn attach_to_process(
                 log("Invalid version".to_string(), log_tx);
                 is_canceled.store(true, Ordering::Relaxed);
                 return PollResult::Err(ThreadError::from(MemoryError::InvalidCCCaster));
+            }
+            Err(MemoryError::InvalidMBAA) => {
+                log("Failed to read MBAA".into(), log_tx);
+                is_canceled.store(true, Ordering::Relaxed);
+                return PollResult::Err(ThreadError::from(MemoryError::InvalidMBAA));
             }
             Err(MemoryError::MultipleProcessesError(ref process)) => {
                 if !has_logged_err {

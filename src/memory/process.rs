@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use windows::{
     Win32::Foundation::{CloseHandle, HANDLE},
@@ -22,6 +24,8 @@ pub enum MemoryError {
     ProcessNotFound(String),
     #[error("Could not read valid values from CCCaster.")]
     InvalidCCCaster,
+    #[error("Invalid values from MBAA, player not on netplay")]
+    InvalidMBAA,
     #[error("Multiple '{0}' processes detected")]
     MultipleProcessesError(String),
     #[error("could not open process with pid: {0}")]
@@ -58,13 +62,10 @@ impl MemoryManager {
     /// Attaches to MBAA.exe
     pub fn attach(&mut self) -> Result<(), MemoryError> {
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
-        let mb_pid = self.find_single_pid(MBAA)?;
-
-        self.mb_process = Some(open_process(
-            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
-            false,
-            mb_pid.as_u32(),
-        )?);
+        if let Err(e) = self.find_valid_mbaa() {
+            self.detach();
+            return Err(e);
+        }
 
         if let Err(e) = self.find_valid_caster() {
             self.detach();
@@ -82,6 +83,22 @@ impl MemoryManager {
             return Err(MemoryError::MultipleProcessesError(name.to_string()));
         }
         Ok(p.pid())
+    }
+
+    fn find_valid_mbaa(&mut self) -> Result<(), MemoryError> {
+        let mb_pid = self.find_single_pid(MBAA)?;
+        let mb_process = open_process(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+            false,
+            mb_pid.as_u32(),
+        )?;
+
+        self.mb_process = Some(open_process(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+            false,
+            mb_pid.as_u32(),
+        )?);
+        Ok(())
     }
 
     /// Mostly for wine users

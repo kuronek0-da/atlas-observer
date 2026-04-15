@@ -118,6 +118,11 @@ pub fn run(
         match perform_queueing(&ctx, ids, &cmd_rx) {
             Ok(Queue::Matched) => {
                 validation::run(game_state_rx, &ctx.client, ctx.log_tx.clone());
+                if ctx.change_state(ClientState::Idle).is_err() {
+                    ctx.log("Internal error when trying to exit ranked".into());
+                } else {
+                    ctx.log("Ranked mode disabled".into());
+                }
             }
             Ok(Queue::Canceled) => {
                 continue;
@@ -241,7 +246,7 @@ fn perform_queueing(
     let is_canceled = Arc::clone(&ctx.is_canceled);
 
     info!("Sending queue request to the server");
-    ctx.log("Sending queue request to the server".to_string());
+    ctx.log("Waiting for opponent...".into());
 
     let handle = spawn_queue_worker(ctx.clone(), ids, are_paired.clone());
 
@@ -253,6 +258,7 @@ fn perform_queueing(
             }
 
             ctx.client.send_cancel_queue()?;
+            ctx.log("Ranked mode disabled".into());
             return Ok(Queue::Canceled);
         }
 
@@ -261,6 +267,7 @@ fn perform_queueing(
                 if ctx.change_state(ClientState::Idle).is_err() {
                     ctx.log("Error trying to go back to idle".to_string());
                 }
+                ctx.log("Ranked mode disabled".into());
                 return Ok(Queue::Canceled);
             }
             return Ok(Queue::Matched);
@@ -294,7 +301,7 @@ fn spawn_queue_worker(
             }
             Err(ClientError::ServerError(408)) => {
                 error!("Queue request expired: {}", ClientError::ServerError(408));
-                ctx.log("Queue request expired, could not pair players".to_string());
+                ctx.log("Queue request expired".to_string());
             }
             Err(ClientError::RequestError) => {
                 error!("No response from the server: {}", ClientError::RequestError);
